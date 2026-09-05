@@ -58,6 +58,17 @@ shadows on cards, solid-color borders, `<form>` tags in React.
 7. Personal email domains are rejected on import (gmail, yahoo, hotmail,
    outlook, icloud, etc.).
 
+**Known limitation (v1 export):** The `trg_export_credits` trigger fires
+on `INSERT INTO exports`, before the Edge Function has generated the file
+or uploaded it to Storage. If anything fails between the row insert and
+the final `status='complete'` UPDATE, the workspace has already been
+charged (`credits_ledger` 'spend' row written) and the file does not
+exist. The user is out those credits either way. This is accepted for
+MVP v1; a proper rollback would need the credit deduction to be deferred
+past the file-and-storage success path (e.g. a two-stage trigger or a
+custom helper that wraps both halves in one transaction). See
+`supabase/functions/export-generator/index.ts` header comment.
+
 ## How this project runs on Hermes
 
 There's no persistent named swarm here — Hermes doesn't keep long-lived

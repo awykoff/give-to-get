@@ -1,7 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
+// Renamed from middleware.ts to proxy.ts for Next.js 16 (middleware is
+// deprecated). Behavior is identical — Supabase cookie refresh, redirect
+// authenticated users away from /login + /signup, gate the dashboard
+// subtree. Default runtime is Node in proxy.ts, which is fine here:
+// we read cookies and call @supabase/ssr, both Node-compatible.
+export async function proxy(request: NextRequest) {
   // Supabase env vars are required — skip auth checks if absent (e.g. during E2E stub boot)
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return NextResponse.next({ request });
