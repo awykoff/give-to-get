@@ -55,6 +55,22 @@ export_contacts, credits_ledger, workspace_contact_access
 - Writing dedup logic as a per-row loop instead of a single batch query —
   this is a `givetoget-backend` concern too, but the constraint (`UNIQUE` on
   `email_normalized`) belongs here.
+- **001/002 field-name drift.** `001_initial_schema.sql` and
+  `002_apollo_aligned_schema.sql` are inconsistent on purpose — `002`
+  superseded `001` for the Apollo-aligned shape, but `001` still lives in the
+  migrations directory. `001` uses `total_rows`/`file_name`/`company_size`
+  and a different `seniority` enum. `002` (the canonical live schema) uses
+  `original_row_count`/`filename`/`num_employees` and the Apollo-aligned
+  enum. Before writing any insert/update against `contacts` or `imports`,
+  cross-check the column names against `002` — a copy-paste off `001` will
+  fail PostgREST with `column "..." does not exist` and waste a deploy cycle.
+- **`contacts.email_normalized` is `GENERATED ALWAYS AS (LOWER(TRIM(email)))
+  STORED`.** Any insert payload including this column fails with
+  `cannot insert into or update computed column "email_normalized"`. Same
+  pattern applies to any future generated column (`companies.quality_score`,
+  whatever ends up in 006+). When writing an insert-shaped TypeScript type
+  for `contacts`, omit the generated column rather than marking it optional
+  — it physically cannot be supplied, so the type should forbid it.
 
 ## Verification
 

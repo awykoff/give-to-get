@@ -55,6 +55,19 @@ export-generator pipelines.
   it — the server-side batch query is the only source of truth.
 - Forgetting the CORS shared helper on a new function, breaking calls from
   the Next.js API route.
+- **Inserting into `contacts` with the anon-keyed Next-style client.** RLS
+  on `contacts` is `INSERT ... WITH CHECK (auth.role() = 'service_role')`.
+  The Next.js API route uses the user's anon-keyed server client (cookies +
+  `auth.getUser()`), so it cannot insert contacts — PostgREST reports the
+  failure as `new row violates row-level security policy for table
+  "contacts"`, which is easy to misdiagnose as a missing column or bad
+  constraint. The contact-insert path must run on the service-role client
+  inside the Edge Function, with the API route as a thin auth gate that
+  resolves `workspace_id` and forwards the payload. Same rule applies to
+  `companies` (also service-role-only INSERT). When the API route does need
+  to write a workspace-scoped row on behalf of a user (`imports`,
+  `exports`), the path is Edge Function + service role + `trg_*_credits`
+  triggers, not an anon-keyed insert.
 
 ## Verification
 
