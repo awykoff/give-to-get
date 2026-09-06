@@ -120,7 +120,7 @@ export default function UploadZone({ onParsed }: Props) {
             { name: "vertical", req: false },
             { name: "seniority", req: false },
             { name: "city / state / country", req: false },
-            { name: "company_size", req: false },
+            { name: "num_employees", req: false },
             { name: "linkedin_url", req: false },
           ].map((col) => (
             <div key={col.name} style={{ display: "flex", alignItems: "center", gap: "8px" }}>

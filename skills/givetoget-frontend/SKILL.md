@@ -43,6 +43,30 @@ Building or editing any React component, page, or piece of UI.
 - Never introduce a second accent color "just for this one badge" — reuse
   the semantic colors (`success`, `danger`, `warn`) already in `C{}`.
 - Don't add `box-shadow` to cards even subtly — flat surfaces only.
+- **UI components referencing schema columns that drifted between
+  migrations.** `001_initial_schema.sql` and `002_apollo_aligned_schema.sql`
+  use different column names for the same concept (`company_size` TEXT
+  CHECK vs `num_employees` INTEGER, plus `total_rows` vs
+  `original_row_count`, etc.). 002 is canonical but client UI was often
+  built before the rename and never updated. The breakage pattern: a
+  page renders fine until it issues a Supabase query
+  (`.select("..., company_size")` or `.eq("company_size", value)`),
+  then 400s with `Could not find the 'company_size' column of 'contacts'
+  in the schema cache`. When you find a query referencing a column
+  that doesn't exist in `002`, don't just rename the symbol — check
+  whether the data type and meaning also changed. `company_size` was a
+  TEXT enum bucket (`"51-200"`); `num_employees` is an INTEGER
+  (`125`). Renaming the select/filter is necessary but not sufficient —
+  any UI that consumed the old bucket strings (dropdown options, table
+  cell rendering) needs a UX rewrite, not just a string replace. Before
+  touching any component, grep the codebase for both the old and new
+  column names together to catch all the references. See
+  `givetoget-database` for the canonical list of renamed fields, and
+  `givetoget-backend` for the parallel trap on the Edge Function side
+  plus the broader deploy-discipline lesson
+  (`references/stale-deploy-diagnostic.md`) — production can be
+  running a build that's months behind this branch, so a column fix
+  shipped to disk may still 400 in production.
 
 ## Verification
 

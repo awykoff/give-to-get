@@ -59,7 +59,7 @@ const ALIASES: Record<string, string> = {
   seniority: "seniority", seniority_level: "seniority", level: "seniority",
   city: "city", state: "state", country: "country",
   location: "city",
-  company_size: "company_size", employees: "company_size",
+  num_employees: "num_employees", employees: "num_employees", company_size: "num_employees", "#_employees": "num_employees",
   phone: "phone", phone_number: "phone",
   linkedin: "linkedin_url", linkedin_url: "linkedin_url",
 };
@@ -74,4 +74,4 @@ export function mapHeaders(headers: string[]): Record<string, string> {
 }
 
 export const REQUIRED_FIELDS = ["first_name", "last_name", "email"];
-export const OPTIONAL_FIELDS = ["title", "company_name", "vertical", "seniority", "city", "state", "country", "company_size", "phone", "linkedin_url"];
+export const OPTIONAL_FIELDS = ["title", "company_name", "vertical", "seniority", "city", "state", "country", "num_employees", "phone", "linkedin_url"];
