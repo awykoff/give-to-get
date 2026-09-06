@@ -99,6 +99,34 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   away" by a subagent trying to move fast.
 - Don't run Phase 3/4 backend work before Phase 1 migrations are applied —
   the Edge Functions assume the Apollo-aligned schema (`002_apollo_aligned_schema.sql`) exists.
+- **Bug fixes touching already-shipped phases default to working-tree-only
+  pending Aaron's end-to-end retest.** Aaron's bug reports follow a
+  consistent shape (Bug: / Found during: / Symptom: / Root cause: /
+  Fix needed: / Verification: / Scope note:) and end with a "Scope
+  note" line that almost always says something like *"don't merge to
+  main yet"* or *"Aaron will re-test … before moving on"*. Honor it
+  literally: write the fix, run `npm run build` to verify it
+  compiles, do NOT commit, do NOT push. Report back what shipped
+  on disk and what Aaron needs to do next (apply a migration in
+  Supabase SQL Editor, redeploy an Edge Function, etc.). Many of
+  these fixes involve Supabase-side state — applied migrations,
+  deployed Edge Functions, Supabase Auth dashboard allow-lists —
+  that Hermes cannot reach from the local repo. The split is:
+  Hermes owns on-disk changes, Aaron owns the cloud-side
+  deployment/apply step. Do not commit on the user's behalf even
+  when the change looks obvious — the retest gate is the point.
+- **Deployed state can drift from on-disk source.** Edge Functions
+  on Supabase are deployed separately; a local edit doesn't reach
+  production until `supabase functions deploy` runs. Migrations on
+  Supabase are applied separately; a file under `supabase/migrations/`
+  doesn't take effect until the user pastes it into the SQL Editor
+  or runs `supabase db push`. The Supabase Auth dashboard has its
+  own Redirect URLs allow-list independent of any code. Before
+  declaring any cloud-touching fix "done," confirm the cloud-side
+  state matches the on-disk state — and if Hermes can't reach the
+  cloud, name the gap explicitly in the report rather than claiming
+  closure. See `givetoget-backend` for the Edge-Function-specific
+  variant of this trap.
 
 ## Verification
 
