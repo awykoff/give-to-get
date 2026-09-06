@@ -159,20 +159,26 @@ that touches the Edge Function fails with a generic `fetch failed`.
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` — anon-keyed client.
 - `SUPABASE_SERVICE_ROLE_KEY` — used by Edge Functions only; never
   exposed to the browser bundle.
-- `SUPABASE_EDGE_FN_URL` — base URL for the import-processor Edge
-  Function. Read by `src/app/api/import/route.ts` and forwarded as
-  the upstream for `POST /api/import`. **Required in production.**
-  Without it the route falls back to `http://localhost:54321/...`
-  which fails on every prod request.
-- `SUPABASE_EDGE_FN_URL_EXPORT` — base URL for the export-generator
-  Edge Function, read by `src/app/api/export/route.ts`.
+- `SUPABASE_EDGE_FN_URL` — base URL for ALL Supabase Edge Functions
+  (import-processor, export-generator, future ones). Read by
+  `src/lib/edge-fn-url.ts` (`getEdgeFnUrl(name)`) and used by both
+  `src/app/api/import/route.ts` and `src/app/api/export/route.ts`.
+  The helper appends `/functions/v1/<name>` per call. **Required in
+  production.** Without it the helper falls back to
+  `http://localhost:54321/functions/v1/<name>` which fails on every
+  prod request, and the helper logs a module-load warning when the
+  fallback is in use so a missing var is loud at cold start, not
+  silent at first request.
+- ~~`SUPABASE_EDGE_FN_URL_EXPORT`~~ — legacy var, only checked by
+  `getLegacyExportUrl()` for ONE redeploy cycle during the var-name
+  migration. The helper logs a one-time warning when it's set so
+  the operator knows to remove it from Vercel env settings after the
+  next successful deploy. Both routes now read the canonical
+  `SUPABASE_EDGE_FN_URL`; do not reintroduce per-route env-var names.
 
-**Naming inconsistency flag:** the two Edge-Function URL vars are
-named differently (`SUPABASE_EDGE_FN_URL` for import,
-`SUPABASE_EDGE_FN_URL_EXPORT` for export). Easy to set one and
-forget the other. Consider normalizing to a single
-`SUPABASE_EDGE_FN_URL_BASE` with per-function paths, or a shared
-helper, the next time either route is touched.
+**Adding a new Edge Function?** Don't add a new env var — pass a new
+`<name>` to `getEdgeFnUrl()` instead. The helper is the single
+source of truth for the URL contract.
 
 ## Deploy discipline — a fix is not done until it's in production
 
