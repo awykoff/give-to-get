@@ -30,8 +30,11 @@ test.describe("Login flow", () => {
 
   test("valid credentials redirect to /dashboard", async ({ page }) => {
     test.skip(
-      !process.env.TEST_USER_EMAIL,
-      "Skipped: set TEST_USER_EMAIL and TEST_USER_PASSWORD env vars to run auth tests against a real Supabase project"
+      !process.env.TEST_USER_EMAIL ||
+        !process.env.TEST_USER_PASSWORD ||
+        !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+        process.env.NEXT_PUBLIC_SUPABASE_URL.startsWith("https://placeholder."),
+      "Skipped: set TEST_USER_EMAIL, TEST_USER_PASSWORD, and a real NEXT_PUBLIC_SUPABASE_URL (not the placeholder) to run auth tests against a real Supabase project"
     );
 
     await page.getByPlaceholder("you@company.com").fill(VALID_EMAIL);

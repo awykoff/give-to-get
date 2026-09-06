@@ -23,8 +23,20 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     env: {
-      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://placeholder.supabase.co",
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE2MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.placeholder",
+      // The `?? placeholder` fallback lets the webServer boot when the
+      // dev shell didn't export the public Supabase vars. Tests that
+      // hit Supabase auth (login, signup, auth-guard) require BOTH
+      // TEST_USER_EMAIL/PASSWORD AND a reachable
+      // NEXT_PUBLIC_SUPABASE_URL; their `test.skip()` guards now
+      // check both. Without that guard, setting TEST_USER_EMAIL alone
+      // would let tests run against placeholder.supabase.co and fail
+      // with a generic `TypeError: Failed to fetch` (caught Sept 2026
+      // when the husky pre-commit hook auto-fired during a commit).
+      NEXT_PUBLIC_SUPABASE_URL:
+        process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://placeholder.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY:
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.placeholder",
     },
   },
 });

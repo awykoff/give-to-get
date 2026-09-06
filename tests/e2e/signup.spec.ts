@@ -19,8 +19,10 @@ test.describe("Signup flow", () => {
 
   test("new email shows confirmation screen with 100-credit message", async ({ page }) => {
     test.skip(
-      !process.env.TEST_USER_EMAIL,
-      "Skipped: requires live Supabase connection — set TEST_USER_EMAIL to enable"
+      !process.env.TEST_USER_EMAIL ||
+        !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+        process.env.NEXT_PUBLIC_SUPABASE_URL.startsWith("https://placeholder."),
+      "Skipped: requires live Supabase connection — set TEST_USER_EMAIL and a real NEXT_PUBLIC_SUPABASE_URL (not the placeholder) to enable"
     );
 
     const email = uniqueEmail();
@@ -36,8 +38,10 @@ test.describe("Signup flow", () => {
 
   test("confirmation screen 'Back to sign in' link goes to /login", async ({ page }) => {
     test.skip(
-      !process.env.TEST_USER_EMAIL,
-      "Skipped: requires live Supabase connection"
+      !process.env.TEST_USER_EMAIL ||
+        !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+        process.env.NEXT_PUBLIC_SUPABASE_URL.startsWith("https://placeholder."),
+      "Skipped: requires live Supabase connection — set TEST_USER_EMAIL and a real NEXT_PUBLIC_SUPABASE_URL to enable"
     );
 
     const email = uniqueEmail();

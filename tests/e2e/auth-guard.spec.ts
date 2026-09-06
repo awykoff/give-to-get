@@ -25,8 +25,11 @@ test.describe("Auth guard — unauthenticated redirects", () => {
 test.describe("Auth guard — authenticated redirect away from auth pages", () => {
   test("authenticated user hitting /login is redirected to /dashboard", async ({ page, context }) => {
     test.skip(
-      !process.env.TEST_USER_EMAIL,
-      "Skipped: requires a valid session cookie — set TEST_USER_EMAIL / TEST_USER_PASSWORD"
+      !process.env.TEST_USER_EMAIL ||
+        !process.env.TEST_USER_PASSWORD ||
+        !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+        process.env.NEXT_PUBLIC_SUPABASE_URL.startsWith("https://placeholder."),
+      "Skipped: requires a valid session cookie — set TEST_USER_EMAIL, TEST_USER_PASSWORD, and a real NEXT_PUBLIC_SUPABASE_URL (not the placeholder)"
     );
 
     // Sign in first to get a valid session
@@ -43,8 +46,11 @@ test.describe("Auth guard — authenticated redirect away from auth pages", () =
 
   test("authenticated user hitting /signup is redirected to /dashboard", async ({ page }) => {
     test.skip(
-      !process.env.TEST_USER_EMAIL,
-      "Skipped: requires a valid session"
+      !process.env.TEST_USER_EMAIL ||
+        !process.env.TEST_USER_PASSWORD ||
+        !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+        process.env.NEXT_PUBLIC_SUPABASE_URL.startsWith("https://placeholder."),
+      "Skipped: requires a valid session — set TEST_USER_EMAIL, TEST_USER_PASSWORD, and a real NEXT_PUBLIC_SUPABASE_URL (not the placeholder)"
     );
 
     await page.goto("/login");
