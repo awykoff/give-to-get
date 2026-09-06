@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getEdgeFnUrl, redactCredentials } from "@/lib/edge-fn-url";
 
 // Thin proxy in front of the `import-processor` Supabase Edge Function.
 //
@@ -16,40 +17,7 @@ import { createClient } from "@/lib/supabase/server";
 // The Edge Function is responsible for all data work — reverse-mapping,
 // dedup, contacts INSERT, imports UPDATE, and the credit-earning trigger.
 
-// Edge Function URL — production should set SUPABASE_EDGE_FN_URL. If unset,
-// we fall back to the local Supabase CLI port so `supabase start` works
-// out of the box for dev. We log a warning when the fallback is used so
-// a missing env var in production is loud at startup, not silent at first
-// request.
-const _EDGE_FN_URL =
-  process.env.SUPABASE_EDGE_FN_URL ??
-  "http://localhost:54321/functions/v1/import-processor";
-if (!process.env.SUPABASE_EDGE_FN_URL) {
-  console.warn(
-    "[api/import] SUPABASE_EDGE_FN_URL is not set — falling back to",
-    `${_EDGE_FN_URL}.`,
-    "This is fine for local `supabase start` but will silently fail in",
-    "production. Set the var in Vercel env settings."
-  );
-}
-
-// Redact any embedded credentials if the operator accidentally baked
-// a `user:pass@host` URL into the env var. Defensive — none of our
-// docs say to do this, but a leaked service key in the URL is a much
-// worse outcome than a fetch failure.
-function safeUrl(raw: string): string {
-  try {
-    const u = new URL(raw);
-    if (u.username || u.password) {
-      u.username = "redacted";
-      u.password = "redacted";
-    }
-    return u.toString();
-  } catch {
-    return "<unparseable URL>";
-  }
-}
-const EDGE_FN_URL = _EDGE_FN_URL;
+const EDGE_FN_URL = getEdgeFnUrl("import-processor");
 
 // Walk an Error's .cause chain and return every distinct message.
 // Node's fetch() wraps low-level failures in `TypeError: fetch failed`
@@ -184,7 +152,7 @@ export async function POST(req: NextRequest) {
       console.error(
         "[api/import] fetch to Edge Function failed:",
         JSON.stringify({
-          url: safeUrl(EDGE_FN_URL),
+          url: redactCredentials(EDGE_FN_URL),
           causes,
           errorName: e instanceof Error ? e.name : undefined,
           errorStack: e instanceof Error ? e.stack : undefined,
@@ -197,7 +165,7 @@ export async function POST(req: NextRequest) {
           // detail; safe to ship temporarily. Once the env-var / network
           // issue is confirmed, this can be collapsed back to just `error`.
           causes: causes.slice(1),
-          url: safeUrl(EDGE_FN_URL),
+          url: redactCredentials(EDGE_FN_URL),
         },
         { status: 502 }
       );

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import {
+  getEdgeFnUrl,
+  getLegacyExportUrl,
+  redactCredentials,
+} from "@/lib/edge-fn-url";
 
 // Thin proxy in front of the `export-generator` Supabase Edge Function.
 //
@@ -18,9 +23,58 @@ import { createClient } from "@/lib/supabase/server";
 // only authenticates the user, resolves their workspace, and shuttles
 // bytes.
 
-const EDGE_FN_URL =
-  process.env.SUPABASE_EDGE_FN_URL_EXPORT ??
-  "http://localhost:54321/functions/v1/export-generator";
+// Edge Function URL — canonical path through src/lib/edge-fn-url.ts.
+//
+// Resolution order:
+//   1. Legacy `SUPABASE_EDGE_FN_URL_EXPORT` (a full URL) if set — kept
+//      for one redeploy cycle so the env-var rename doesn't break prod
+//      mid-rollout. The helper logs a one-time migration warning.
+//   2. Canonical `SUPABASE_EDGE_FN_URL` (a base URL) appended with
+//      "/functions/v1/export-generator".
+//   3. Localhost fallback for `supabase start` (warns at module load).
+const EDGE_FN_URL = getLegacyExportUrl() ?? getEdgeFnUrl("export-generator");
+
+// Walk an Error's .cause chain and return every distinct message.
+// Same shape as `src/app/api/import/route.ts`'s causeChain — duplicated
+// locally so each route stays self-contained for grep-ability and
+// tests, rather than importing a private helper. The redaction helper
+// lives in @/lib/edge-fn-url because that's where URL handling belongs.
+function causeChain(e: unknown): string[] {
+  const out: string[] = [];
+  const seen = new Set<unknown>();
+  let cur: unknown = e;
+  for (let i = 0; i < 5 && cur && !seen.has(cur); i++) {
+    seen.add(cur);
+    const msg =
+      cur instanceof Error
+        ? cur.message || cur.name || "<no message>"
+        : typeof cur === "string"
+        ? cur
+        : (() => {
+            try {
+              return JSON.stringify(cur);
+            } catch {
+              return String(cur);
+            }
+          })();
+    if (msg && !out.includes(msg)) out.push(msg);
+    // `.cause` is standard on Error since Node 16; some libraries also
+    // expose `.errors[]` for AggregateError. Cover both.
+    if (cur instanceof Error && (cur as { cause?: unknown }).cause) {
+      cur = (cur as { cause?: unknown }).cause;
+    } else if (
+      cur &&
+      typeof cur === "object" &&
+      Array.isArray((cur as { errors?: unknown[] }).errors) &&
+      (cur as { errors?: unknown[] }).errors!.length > 0
+    ) {
+      cur = (cur as { errors: unknown[] }).errors[0];
+    } else {
+      break;
+    }
+  }
+  return out;
+}
 
 type ExportFormat = "csv" | "xlsx" | "json";
 
@@ -119,7 +173,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${serviceKey}`,
+        Authorization: "Bearer " + serviceKey,
       },
       body: JSON.stringify({
         workspace_id: workspaceId,
@@ -130,8 +184,31 @@ export async function POST(req: NextRequest) {
       }),
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Edge Function unreachable";
-    return NextResponse.json({ error: message }, { status: 502 });
+    // Same failure-mode handling as the import route — walk .cause so the
+    // operator sees DNS / TLS / connection-refused instead of the
+    // generic "fetch failed" wrapper, and surface the redacted URL so
+    // they can confirm whether they hit the right host. Server-side log
+    // gets full detail; client response gets the first cause plus the
+    // remaining chain + redacted URL.
+    const causes = causeChain(e);
+    const message = causes[0] ?? "Edge Function unreachable";
+    console.error(
+      "[api/export] fetch to Edge Function failed:",
+      JSON.stringify({
+        url: redactCredentials(EDGE_FN_URL),
+        causes,
+        errorName: e instanceof Error ? e.name : undefined,
+        errorStack: e instanceof Error ? e.stack : undefined,
+      })
+    );
+    return NextResponse.json(
+      {
+        error: message,
+        causes: causes.slice(1),
+        url: redactCredentials(EDGE_FN_URL),
+      },
+      { status: 502 },
+    );
   }
 
   // Parse once — pass through to the client with the same status code.
