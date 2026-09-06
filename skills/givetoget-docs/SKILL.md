@@ -33,6 +33,28 @@ lands that isn't yet reflected in the project docs.
 - Letting `AGENTS.md` go stale on a business rule (e.g. it stops mentioning
   the append-only ledger) — Hermes loads only this file for project
   context, so anything missing from it simply isn't in context at all.
+- **AGENTS.md's Tech stack table drifts from `package.json` and
+  `supabase/functions/*/deno.json`.** Example seen Sept 2026:
+  AGENTS.md said "Next.js 15" while the build output reported
+  "Next.js 16.2.7" (Next 16 was in `package.json`). The table is
+  manually edited, not generated. When syncing docs after any
+  dependency change, re-derive the version rows from the actual
+  lockfiles instead of trusting the previous table value. Same rule
+  for the Supabase JS client version, the Deno version the Edge
+  Functions target, the Tailwind major version. A single stale
+  version line in AGENTS.md produces "the doc says X but the build
+  says Y" confusion in every future bug report until someone fixes
+  it.
+- **Cross-reference the Critical business rules list against the
+  schema before declaring a docs sync complete.** New rules belong
+  there (e.g. "PKCE callback is /auth/callback", "workspace
+  bootstrap is owned by trg_on_auth_user_created",
+  "contacts.num_employees is canonical, not company_size"). Rules
+  are listed in the order they were added, not the order of
+  importance — appending is fine, renumbering is not required.
+  Each rule needs at least one on-disk artifact to point at (file
+  path + the canonical helper or column name) so a reader can
+  verify it without grepping.
 
 ## Verification
 

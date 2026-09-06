@@ -241,27 +241,32 @@ export-generator pipelines.
   tried, credentials redacted>` so the operator can immediately see
   whether it's DNS, connection, TLS, or timeout — and where you tried
   to send the request. Pattern lives in
-  `src/app/api/import/route.ts` as `causeChain(e)` + `safeUrl(EDGE_FN_URL)`.
+  `src/app/api/import/route.ts` as `causeChain(e)` +
+  `redactCredentials(EDGE_FN_URL)` — both routes share the same
+  helper and the same pattern now; the helper is at
+  `src/lib/edge-fn-url.ts`.
 - **Edge-Function URL from env var with a localhost fallback silently
-  fails in production.** Both `src/app/api/import/route.ts` and
-  `src/app/api/export/route.ts` read
-  `process.env.SUPABASE_EDGE_FN_URL` (or the `_EXPORT` variant) with
-  a fallback to `http://localhost:54321/functions/v1/<name>`. That
-  fallback is for `supabase start` — but if the env var is unset in
-  Vercel production, the route silently fetches localhost on a network
-  that has no listener, fails with the generic `fetch failed`, and
-  looks identical to a misconfigured URL or a Supabase outage. Three
-  things to do in any route that has this shape: (1) warn at module
-  load when the fallback is in use so a missing env var is loud at
-  cold start, not silent at first request; (2) redact credentials in
-  the URL before logging/returning it (defensive — none of our docs
-  say to put creds in the URL, but a leaked service role key is worse
-  than a fetch failure); (3) include the URL in the fetch-failed
-  response so the operator immediately sees whether they're hitting
-  the right host. The two routes currently use different env var
-  names (`SUPABASE_EDGE_FN_URL` vs `SUPABASE_EDGE_FN_URL_EXPORT`) —
-  easy to set one and forget the other; consider normalizing to one
-  name or a shared helper if you touch either route again.
+  fails in production.** Both routes go through the canonical helper
+  at `src/lib/edge-fn-url.ts` (`getEdgeFnUrl(name)` reads
+  `SUPABASE_EDGE_FN_URL` and appends `/functions/v1/<name>`; the
+  export route additionally consults `getLegacyExportUrl()` for the
+  one-redeploy-cycle `SUPABASE_EDGE_FN_URL_EXPORT` migration aid).
+  If `SUPABASE_EDGE_FN_URL` is unset the helper falls back to
+  `http://localhost:54321/functions/v1/<name>` so `supabase start`
+  works — but in Vercel production a missing var means the route
+  silently fetches localhost on a network with no listener, fails
+  with the generic `fetch failed`, and looks identical to a
+  misconfigured URL or a Supabase outage. The helper handles three
+  things so the trap is loud instead of silent: (1) `console.warn`
+  at module load when the fallback is in use, so a missing production
+  var shows up in cold-start logs not at first request; (2)
+  `redactCredentials(url)` for any URL you log or return, defensive
+  against a leaked service role key embedded as `user:pass@host`;
+  (3) the caller is responsible for including the redacted URL in
+  the fetch-failed response body so the operator immediately sees
+  whether they're hitting the right host. **Don't reintroduce the
+  per-route env-var reads** — adding a new Edge Function means
+  passing a new `<name>` to `getEdgeFnUrl()`, not a new env var.
 
 ## Verification
 
