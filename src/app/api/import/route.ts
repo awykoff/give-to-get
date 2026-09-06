@@ -16,9 +16,82 @@ import { createClient } from "@/lib/supabase/server";
 // The Edge Function is responsible for all data work — reverse-mapping,
 // dedup, contacts INSERT, imports UPDATE, and the credit-earning trigger.
 
-const EDGE_FN_URL =
+// Edge Function URL — production should set SUPABASE_EDGE_FN_URL. If unset,
+// we fall back to the local Supabase CLI port so `supabase start` works
+// out of the box for dev. We log a warning when the fallback is used so
+// a missing env var in production is loud at startup, not silent at first
+// request.
+const _EDGE_FN_URL =
   process.env.SUPABASE_EDGE_FN_URL ??
   "http://localhost:54321/functions/v1/import-processor";
+if (!process.env.SUPABASE_EDGE_FN_URL) {
+  console.warn(
+    "[api/import] SUPABASE_EDGE_FN_URL is not set — falling back to",
+    `${_EDGE_FN_URL}.`,
+    "This is fine for local `supabase start` but will silently fail in",
+    "production. Set the var in Vercel env settings."
+  );
+}
+
+// Redact any embedded credentials if the operator accidentally baked
+// a `user:pass@host` URL into the env var. Defensive — none of our
+// docs say to do this, but a leaked service key in the URL is a much
+// worse outcome than a fetch failure.
+function safeUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    if (u.username || u.password) {
+      u.username = "redacted";
+      u.password = "redacted";
+    }
+    return u.toString();
+  } catch {
+    return "<unparseable URL>";
+  }
+}
+const EDGE_FN_URL = _EDGE_FN_URL;
+
+// Walk an Error's .cause chain and return every distinct message.
+// Node's fetch() wraps low-level failures in `TypeError: fetch failed`
+// whose `.cause` is the real reason (ECONNREFUSED, ENOTFOUND, TLS, etc.).
+// Sometimes the cause itself has a cause (e.g. undici wraps the
+// underlying socket error), so walk down to a sane depth.
+function causeChain(e: unknown): string[] {
+  const out: string[] = [];
+  const seen = new Set<unknown>();
+  let cur: unknown = e;
+  for (let i = 0; i < 5 && cur && !seen.has(cur); i++) {
+    seen.add(cur);
+    const msg =
+      cur instanceof Error
+        ? cur.message || cur.name || "<no message>"
+        : typeof cur === "string"
+        ? cur
+        : (() => {
+            try {
+              return JSON.stringify(cur);
+            } catch {
+              return String(cur);
+            }
+          })();
+    if (msg && !out.includes(msg)) out.push(msg);
+    // `.cause` is standard on Error since Node 16; some libraries also
+    // expose `.errors[]` for AggregateError. Cover both.
+    if (cur instanceof Error && (cur as { cause?: unknown }).cause) {
+      cur = (cur as { cause?: unknown }).cause;
+    } else if (
+      cur &&
+      typeof cur === "object" &&
+      Array.isArray((cur as { errors?: unknown[] }).errors) &&
+      (cur as { errors?: unknown[] }).errors!.length > 0
+    ) {
+      cur = (cur as { errors: unknown[] }).errors[0];
+    } else {
+      break;
+    }
+  }
+  return out;
+}
 
 interface ProxyRequestBody {
   rows: Record<string, string>[];
@@ -88,7 +161,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${serviceKey}`,
+        Authorization: "Bearer " + serviceKey,
       },
       body: JSON.stringify({
         workspace_id: workspaceId,
@@ -99,11 +172,43 @@ export async function POST(req: NextRequest) {
       }),
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Edge Function unreachable";
-    return NextResponse.json({ error: message }, { status: 502 });
-  }
+      // Node's fetch() throws `TypeError: fetch failed` on any network-level
+      // failure (DNS, connection refused, TLS, abort, timeout). The actual
+      // reason lives on `.cause` and sometimes on `.cause.cause`. Walk the
+      // chain so the operator sees the real error instead of the wrapper.
+      const causes = causeChain(e);
+      const message = causes[0] ?? "Edge Function unreachable";
+      // Log everything we know — full chain + the URL we tried. Server-side
+      // log is the place where unredacted detail is fine; the response to
+      // the client gets a scrubbed subset.
+      console.error(
+        "[api/import] fetch to Edge Function failed:",
+        JSON.stringify({
+          url: safeUrl(EDGE_FN_URL),
+          causes,
+          errorName: e instanceof Error ? e.name : undefined,
+          errorStack: e instanceof Error ? e.stack : undefined,
+        })
+      );
+      return NextResponse.json(
+        {
+          error: message,
+          // Surface the chain + the URL we tried. This is debugging-mode
+          // detail; safe to ship temporarily. Once the env-var / network
+          // issue is confirmed, this can be collapsed back to just `error`.
+          causes: causes.slice(1),
+          url: safeUrl(EDGE_FN_URL),
+        },
+        { status: 502 }
+      );
+    }
 
   // Parse once — pass through to the client with the same status.
+  // Friendlier-message pass: if the upstream returned a raw PostgREST
+  // schema-cache error (or any other "could not find column X of Y" /
+  // RLS / constraint message), wrap it so the client gets a stable
+  // signal instead of the raw Postgres string. We still log the raw
+  // message server-side for ops to debug.
   let parsed: EdgeResponse | { error: string };
   try {
     parsed = await upstream.json();
@@ -111,6 +216,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "Edge Function returned a non-JSON response" },
       { status: 502 },
+    );
+  }
+
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "error" in parsed &&
+    typeof parsed.error === "string" &&
+    /schema cache|Row Level Security|row-level security|violates row-level security policy|violates check constraint|duplicate key value violates unique constraint|violates unique constraint/i.test(parsed.error)
+  ) {
+    console.error("[api/import] upstream schema/RLError:", parsed.error);
+    return NextResponse.json(
+      {
+        error:
+          "The import pipeline hit a server-side error. This is almost always a deploy-state mismatch — the deployed code is older than the current source. Check that the Edge Function and this route are both on the latest version.",
+        details: parsed.error,
+      },
+      { status: upstream.status },
     );
   }
 
