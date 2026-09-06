@@ -50,6 +50,9 @@ shadows on cards, solid-color borders, `<form>` tags in React.
 
 1. `credits_ledger` is **append-only** — never UPDATE or DELETE rows.
 2. `email_normalized` (LOWER + TRIM) is the global contact dedup key.
+   All candidate-builder normalization must use `.toLowerCase().trim()` to
+   match — see `supabase/functions/import-processor/index.ts` candidate
+   build site and the givetoget-backend skill pitfall.
 3. Never return a contact's email without a credit unlock or the workspace's
    own contribution of that contact.
 4. Credit **earn** happens via a DB trigger when an import completes.
@@ -57,6 +60,35 @@ shadows on cards, solid-color borders, `<form>` tags in React.
 6. RLS is enabled on every table, from day one, no exceptions.
 7. Personal email domains are rejected on import (gmail, yahoo, hotmail,
    outlook, icloud, etc.).
+8. **Canonical schema column names (002_apollo_aligned_schema.sql).** The
+   `contacts.num_employees` column is INTEGER — NOT the older
+   `company_size` TEXT enum from `001_initial_schema.sql`. Use
+   `num_employees` everywhere; `company_size` references are stale
+   schema and will surface as `Could not find the 'company_size'
+   column of 'contacts' in the schema cache`. Same caution applies to
+   any other 001→002 renames (see `givetoget-database` skill for the
+   canonical list).
+9. **Workspace bootstrap is owned by `trg_on_auth_user_created`.** The
+   trigger on `auth.users` calls `private.provision_workspace_for_user`
+   which creates the workspaces row, the admin workspace_members row,
+   and the 100-credit bonus credits_ledger row. Installed by
+   `supabase/migrations/006_signup_bootstrap.sql`. Works for both
+   email confirmation and Google OAuth because both end in an
+   `auth.users` INSERT. Application code must NEVER insert directly
+   into `workspaces`, `workspace_members`, or write a `'bonus'` row
+   to `credits_ledger` — that's the trigger's job. If a new user
+   authenticates but gets "No workspace found for this user", the
+   trigger isn't running (either the migration wasn't applied or the
+   user pre-dates the trigger and the backfill didn't run).
+10. **PKCE callback is `/auth/callback`** (`src/app/auth/callback/route.ts`).
+    Every Supabase Auth redirect — `signUp({ emailRedirectTo })`,
+    `signInWithOAuth({ redirectTo })`, magic links — MUST point at
+    this callback, never at the final destination. The callback calls
+    `exchangeCodeForSession()` then redirects to `?next` (default
+    `/dashboard`). Without it, the PKCE code param is dropped at the
+    destination and the user lands unauthenticated. After changing
+    the callback path, also update the Supabase Auth dashboard's
+    Redirect URLs allow-list.
 
 **Known limitation (v1 export):** The `trg_export_credits` trigger fires
 on `INSERT INTO exports`, before the Edge Function has generated the file
@@ -110,6 +142,83 @@ Phase 3 — Import:        import-processor Edge Function, upload + review UI
 Phase 4 — Exchange:      Contacts table, filters, export modal, export Edge Function
 Phase 5 — Polish:        Mobile pass, E2E suite, docs sync
 ```
+
+Phase 1 was retroactively completed by `006_signup_bootstrap.sql` —
+that migration installed the workspace-bootstrap trigger that should
+have shipped with the original 001 migration. Phases 3 and 4 are
+shipped; the import flow is end-to-end verified as of Sept 2026.
+
+## Production env vars (Vercel project settings)
+
+Set these in Vercel → Project Settings → Environment Variables before
+the deploy is considered done. Missing vars are silent failures — the
+app starts, requests succeed for cached routes, and the first request
+that touches the Edge Function fails with a generic `fetch failed`.
+
+- `NEXT_PUBLIC_SUPABASE_URL` — anon-keyed client.
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — anon-keyed client.
+- `SUPABASE_SERVICE_ROLE_KEY` — used by Edge Functions only; never
+  exposed to the browser bundle.
+- `SUPABASE_EDGE_FN_URL` — base URL for the import-processor Edge
+  Function. Read by `src/app/api/import/route.ts` and forwarded as
+  the upstream for `POST /api/import`. **Required in production.**
+  Without it the route falls back to `http://localhost:54321/...`
+  which fails on every prod request.
+- `SUPABASE_EDGE_FN_URL_EXPORT` — base URL for the export-generator
+  Edge Function, read by `src/app/api/export/route.ts`.
+
+**Naming inconsistency flag:** the two Edge-Function URL vars are
+named differently (`SUPABASE_EDGE_FN_URL` for import,
+`SUPABASE_EDGE_FN_URL_EXPORT` for export). Easy to set one and
+forget the other. Consider normalizing to a single
+`SUPABASE_EDGE_FN_URL_BASE` with per-function paths, or a shared
+helper, the next time either route is touched.
+
+## Deploy discipline — a fix is not done until it's in production
+
+Hermes from this machine cannot redeploy. It can write code, write
+migrations, run `npm run build`, run tests. It cannot run
+`supabase functions deploy` (no Supabase CLI linked, no
+`supabase/config.toml`, no service-role token) and cannot run
+`vercel --prod` (no Vercel token). The user runs the redeploys.
+
+That asymmetry is the source of the recurring "I fixed it and nothing
+changed" failure mode. The on-disk source is correct, production is
+running something older, the bug repros.
+
+**The deploy checklist. Run all that apply, in order.**
+
+1. **Code only** (Next.js / app / components) → `vercel --prod` from
+   the user's machine. Confirm Vercel deployment succeeded.
+2. **Edge Function** (`supabase/functions/<name>/index.ts` or any
+   `_shared/*` it imports) → `supabase functions deploy <name>` from
+   the user's machine. Confirm Supabase Edge Function logs show the
+   new version's invocation.
+3. **Migration** (anything under `supabase/migrations/`) → apply via
+   Supabase SQL Editor or `supabase db push`. Verify the new
+   objects exist (`\df`, `\dt`, `\dT`, or the matching
+   `information_schema` query).
+4. **Supabase Auth dashboard** (any change to a redirect URL,
+   callback path, or OAuth provider) → update the Redirect URLs
+   allow-list in the dashboard. This is independent of any code;
+   setting the code without updating the allow-list silently breaks
+   sign-in.
+5. **Verify in production** before declaring done. For Edge Functions:
+   check the Supabase Edge Function logs for the new version. For
+   Vercel routes: hit the route from the browser with the same input
+   the bug report used, confirm the response matches the fix. For
+   migrations: query the database directly.
+
+**Hermes's contract:** write the on-disk change, run `npm run build`
+to confirm it compiles, hand the redeploy back to the user with the
+exact command. Do NOT commit on the user's behalf when the bug
+report has a scope note like "don't merge yet" or "I'll re-test". Do
+NOT claim a fix is shipped until production behaves as fixed.
+
+See `skills/givetoget-lead-developer/SKILL.md` for the session-time
+view of the same rule, and
+`skills/givetoget-backend/references/stale-deploy-diagnostic.md` for
+the diagnostic sequence when a fix on disk doesn't reach production.
 
 ## File structure
 

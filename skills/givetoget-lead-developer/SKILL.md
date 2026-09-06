@@ -128,6 +128,49 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   closure. See `givetoget-backend` for the Edge-Function-specific
   variant of this trap.
 
+## Deploy checklist — load before any commit that touches production code
+
+The on-disk change is step one of "done," not the whole thing. The
+recurring failure mode on this project is committing a fix, having
+Aaron re-test, and watching the bug repro because the deployed
+runtime is older than the repo. Hermes cannot redeploy from this
+machine — no Vercel token, no Supabase CLI linked, no
+`supabase/config.toml`, no service-role key. The user runs the
+redeploy. The handoff is the contract.
+
+Run all that apply, in order:
+
+1. **Code only** (anything under `src/app/**`, components,
+   `next.config.*`) → user runs `vercel --prod`. Confirm Vercel
+   shows a successful deployment for the new SHA.
+2. **Edge Function** (`supabase/functions/<name>/index.ts` plus any
+   `_shared/*` it imports) → user runs `supabase functions deploy
+   <name>`. Confirm Supabase Edge Function logs show the new
+   version's invocations after the redeploy.
+3. **Migration** (anything new under `supabase/migrations/`) → user
+   applies via Supabase SQL Editor or `supabase db push`. Verify the
+   new objects exist (run `\df`, `\dt`, `\dT`, or the matching
+   `information_schema` query).
+4. **Supabase Auth dashboard** (any change to a callback path, a
+   redirect URL, or an OAuth provider) → user updates the Redirect
+   URLs allow-list. Independent of any code; setting code without
+   the allow-list entry silently breaks sign-in.
+5. **Verify in production** before reporting done. For Edge Functions:
+   Supabase Edge Function logs for the new version. For Vercel
+   routes: hit the route from the browser with the same input the
+   bug report used. For migrations: query the DB directly.
+
+If the bug report has a scope note ("don't merge yet" / "I'll
+re-test … before moving on"), do not commit on the user's behalf —
+write the fix on disk, run `npm run build`, report back what needs
+to be applied/redeployed. The retest gate is the point; do not
+short-circuit it.
+
+See `AGENTS.md` "Deploy discipline" section for the always-loaded
+copy of this checklist and `givetoget-backend`'s
+`references/stale-deploy-diagnostic.md` for the diagnostic sequence
+when a fix on disk doesn't reach production.
+
 ## Verification
 
 Before marking a phase complete: `npm run build` succeeds, the page/route
