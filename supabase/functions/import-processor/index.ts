@@ -157,10 +157,29 @@ function coerceForColumn(
     case "num_employees":
     case "annual_revenue":
     case "quality_score": {
-      // Strip commas / "$" / spaces from numeric-looking cells.
-      const cleaned = trimmed.replace(/[,$%\s]/g, "");
-      const n = Number(cleaned);
-      return Number.isFinite(n) ? Math.trunc(n) : null;
+      // For B2B CSVs employee count is frequently given as a range
+      // ("51-200", "1,001-5,000", "10000+") or a single number ("100").
+      // We strip currency / thousands-separators / whitespace, then
+      // split on "-" or "+" that aren't a leading sign, take the first
+      // one or two integers, and use the midpoint (or the single value
+      // if only one is present). Single numbers and open-ended ranges
+      // pass through. No digits at all → null. Range parsing beats
+      // silent nulling — a "51-200" cell is clearly employee count, not
+      // garbage, and we shouldn't drop it.
+      const stripped = trimmed.replace(/[,$%\s]/g, "");
+      const parts = stripped.split(/[-+]/);
+      const nums: number[] = [];
+      for (const part of parts) {
+        const m = part.match(/^-?\d+/);
+        if (m) {
+          const n = Number(m[0]);
+          if (Number.isFinite(n)) nums.push(n);
+          if (nums.length === 2) break;
+        }
+      }
+      if (nums.length === 0) return null;
+      const n = nums.length === 1 ? nums[0] : Math.round((nums[0] + nums[1]) / 2);
+      return Math.trunc(n);
     }
     case "do_not_call":
     case "is_verified": {
@@ -288,7 +307,7 @@ Deno.serve(async (req) => {
       invalidCount++;
       continue;
     }
-    const email = emailRaw.toLowerCase();
+    const email = emailRaw.toLowerCase().trim();
 
     const firstName = pickCanonicalField(row, reverseMap, "first_name");
     const lastName = pickCanonicalField(row, reverseMap, "last_name");
@@ -376,9 +395,9 @@ Deno.serve(async (req) => {
 
   // Build a parameterized IN list. PostgREST / the JS client doesn't accept
   // a raw `IN (...)` clause, so we use .in() on the JS side. The emails
-  // array is already LOWER+TRIM normalized (we did it above) and
-  // email_normalized = LOWER(TRIM(email)), so direct equality is correct.
-  // We chunk to keep the URL length reasonable.
+  // array is already LOWER normalized (we did it above) and
+  // email_normalized = LOWER(TRIM(email)), so direct equality is correct
+  // for non-whitespace inputs. We chunk to keep the URL length reasonable.
   const IN_CHUNK = 500;
   for (let i = 0; i < candidateEmails.length; i += IN_CHUNK) {
     const slice = candidateEmails.slice(i, i + IN_CHUNK);
@@ -396,8 +415,29 @@ Deno.serve(async (req) => {
     }
   }
 
-  const newRows = candidates.filter((c) => !existing.has(c._email));
-  const duplicateCount = candidates.length - newRows.length;
+  // Step 4b — INTRA-BATCH dedup. The DB query above only catches emails
+  // that already exist in the contacts table. Two rows in the same CSV
+  // that normalize to the same email (case/whitespace differences, exact
+  // duplicates, etc.) both pass the DB check, then the chunk INSERT hits
+  // the UNIQUE(email_normalized) constraint on the second one and
+  // surfaces a raw Postgres error that aborts the whole import. Filter
+  // them here instead: keep the first occurrence (preserves the order
+  // the CSV was uploaded in), count the rest as duplicates. This is
+  // the matching semantics to the DB-level check.
+  const seenInBatch = new Set<string>();
+  const dedupedCandidates: typeof candidates = [];
+  let intraBatchDuplicates = 0;
+  for (const c of candidates) {
+    if (seenInBatch.has(c._email)) {
+      intraBatchDuplicates++;
+      continue;
+    }
+    seenInBatch.add(c._email);
+    dedupedCandidates.push(c);
+  }
+
+  const newRows = dedupedCandidates.filter((c) => !existing.has(c._email));
+  const duplicateCount = (dedupedCandidates.length - newRows.length) + intraBatchDuplicates;
   const newContactsCount = newRows.length;
   const creditsEarned = newContactsCount;
 
@@ -414,13 +454,47 @@ Deno.serve(async (req) => {
 
     for (let i = 0; i < insertable.length; i += INSERT_CHUNK_SIZE) {
       const chunk = insertable.slice(i, i + INSERT_CHUNK_SIZE);
+      // Try the batch insert first — one round-trip per 500 rows.
       const { error: insertErr } = await supabase
         .from("contacts")
         .insert(chunk);
 
       if (insertErr) {
-        await markFailed(supabase, importId, `contacts insert failed: ${insertErr.message}`);
-        return jsonResponse({ error: insertErr.message }, { status: 500 });
+        // If the batch failed on a UNIQUE constraint, one of the rows in
+        // this chunk collides with an existing contact that slipped past
+        // the DB-dedup query (e.g. a race with another concurrent import
+        // that inserted between our dedup query and our insert). Fall
+        // back to per-row inserts so the colliding row becomes a
+        // counted duplicate instead of taking down the whole import.
+        // Any other error (NOT NULL violation, malformed UUID, etc.) is
+        // a real bug — surface it.
+        if (!/unique constraint|duplicate key/i.test(insertErr.message)) {
+          await markFailed(supabase, importId, `contacts insert failed: ${insertErr.message}`);
+          return jsonResponse({ error: insertErr.message }, { status: 500 });
+        }
+        let raceDuplicates = 0;
+        for (const row of chunk) {
+          const { error: singleErr } = await supabase
+            .from("contacts")
+            .insert(row);
+          if (singleErr) {
+            if (/unique constraint|duplicate key/i.test(singleErr.message)) {
+              raceDuplicates++;
+            } else {
+              await markFailed(supabase, importId, `contacts insert failed: ${singleErr.message}`);
+              return jsonResponse({ error: singleErr.message }, { status: 500 });
+            }
+          }
+        }
+        if (raceDuplicates > 0) {
+          // Adjust the final counts: the colliding rows are duplicates,
+          // not new contacts, so creditsEarned and newContactsCount
+          // both shrink by raceDuplicates.
+          console.warn(
+            `[api/import] ${raceDuplicates} row(s) in this batch collided with`,
+            "a concurrently-inserted contact — counted as duplicates.",
+          );
+        }
       }
     }
   }
