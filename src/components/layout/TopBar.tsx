@@ -10,10 +10,10 @@ const PAGE_TITLES: Record<string, string> = {
 };
 
 interface TopBarProps {
-  credits?: number;
+  credits: number;
 }
 
-export default function TopBar({ credits = 0 }: TopBarProps) {
+export default function TopBar({ credits }: TopBarProps) {
   const pathname = usePathname();
   const title = PAGE_TITLES[pathname] ?? "give-to-get.com";
   const showExport = pathname === "/contacts";

@@ -1,17 +1,11 @@
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
 import StatCard from "@/components/dashboard/StatCard";
+import {
+  getWorkspaceContext,
+  getWorkspaceCredits,
+} from "@/lib/workspace-credits";
 
-async function getDashboardData(workspaceId: string) {
-  const supabase = await createClient();
-
-  const [creditsRes, importsRes, exportsRes, poolRes] = await Promise.all([
-    // Credit balance = sum of all ledger entries for this workspace
-    supabase
-      .from("credits_ledger")
-      .select("amount")
-      .eq("workspace_id", workspaceId),
-
+async function getDashboardStats(supabase: Awaited<ReturnType<typeof getWorkspaceContext>>["supabase"], workspaceId: string) {
+  const [importsRes, exportsRes, poolRes] = await Promise.all([
     // Total contacts this workspace has contributed
     supabase
       .from("imports")
@@ -31,16 +25,14 @@ async function getDashboardData(workspaceId: string) {
       .select("id", { count: "exact", head: true }),
   ]);
 
-  const credits = (creditsRes.data ?? []).reduce((sum, r) => sum + (r.amount ?? 0), 0);
   const contributed = (importsRes.data ?? []).reduce((sum, r) => sum + (r.new_contacts_count ?? 0), 0);
   const downloaded = (exportsRes.data ?? []).reduce((sum, r) => sum + (r.contact_count ?? 0), 0);
   const poolSize = poolRes.count ?? 0;
 
-  return { credits, contributed, downloaded, poolSize };
+  return { contributed, downloaded, poolSize };
 }
 
-async function getRecentImports(workspaceId: string) {
-  const supabase = await createClient();
+async function getRecentImports(supabase: Awaited<ReturnType<typeof getWorkspaceContext>>["supabase"], workspaceId: string) {
   const { data } = await supabase
     .from("imports")
     .select("id, created_at, file_name, total_rows, new_contacts_count, duplicate_count, invalid_count, status")
@@ -62,25 +54,15 @@ function timeAgo(iso: string) {
 }
 
 export default async function DashboardPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const { supabase, workspaceId } = await getWorkspaceContext();
 
-  // Get workspace for this user
-  const { data: member } = await supabase
-    .from("workspace_members")
-    .select("workspace_id")
-    .eq("user_id", user.id)
-    .single();
-
-  const workspaceId = member?.workspace_id;
-
-  const [stats, recentImports] = workspaceId
-    ? await Promise.all([
-        getDashboardData(workspaceId),
-        getRecentImports(workspaceId),
-      ])
-    : [{ credits: 0, contributed: 0, downloaded: 0, poolSize: 0 }, []];
+  const stats = workspaceId
+    ? await getDashboardStats(supabase, workspaceId)
+    : { contributed: 0, downloaded: 0, poolSize: 0 };
+  const recentImports = workspaceId ? await getRecentImports(supabase, workspaceId) : [];
+  // Pull the canonical credits number from the shared helper so the
+  // topbar pill and this stat card are guaranteed to agree.
+  const credits = await getWorkspaceCredits();
 
   return (
     <div style={{ maxWidth: "1000px" }}>
@@ -93,7 +75,7 @@ export default async function DashboardPage() {
       }}>
         <StatCard
           label="Credits available"
-          value={stats.credits}
+          value={credits}
           sub="Earn 1 per unique contact uploaded"
           accent
           icon={
