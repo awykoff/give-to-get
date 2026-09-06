@@ -87,6 +87,14 @@ web_modules/
 .next
 out
 
+# Next.js auto-generated TypeScript references. Regenerated on every
+# `next build`; the import path it writes toggles between
+# `./.next/types/routes.d.ts` (prod) and `./.next/dev/types/routes.d.ts`
+# (dev). Tracked previously, restored manually after every commit —
+# not sustainable. tsconfig.json already includes both path variants,
+# so types resolve regardless of which path the file points at.
+next-env.d.ts
+
 # Nuxt.js build / generate output
 .nuxt
 dist

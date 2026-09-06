@@ -99,6 +99,43 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   away" by a subagent trying to move fast.
 - Don't run Phase 3/4 backend work before Phase 1 migrations are applied —
   the Edge Functions assume the Apollo-aligned schema (`002_apollo_aligned_schema.sql`) exists.
+- **`next-env.d.ts` is gitignored — do NOT re-add it to git.**
+  Next.js 16 rewrites the import path on every `npm run build`
+  (`.next/types/routes.d.ts` for prod, `.next/dev/types/routes.d.ts`
+  for dev). The file used to be tracked and required `git restore`
+  after every commit; that policy was retired Sept 2026 in favor of
+  ignoring it. `tsconfig.json` already includes both path variants
+  in its `include` array, so types resolve regardless of which
+  path the regenerated file points at. If `git status` ever shows
+  `next-env.d.ts` modified, the answer is *not* to commit it —
+  check that `.gitignore` still contains the entry. The full
+  policy is in `AGENTS.md` under "next-env.d.ts policy" and in the
+  README setup steps.
+- **When wrapping up a multi-bug session, split commits along bug
+  boundaries, not feature boundaries.** Aaron explicitly asked for
+  this on the Sept 2026 close-out (six-bug arc: auth callback,
+  workspace bootstrap, num_employees, stale Vercel, missing env
+  var, intra-batch + trim). The reason is `git blame` and rollback:
+  one commit per bug means `git revert <sha>` cleanly takes out a
+  single fix without dragging in the others; one giant commit makes
+  every future investigation re-read the entire diff. Mapping rule
+  used in that session: each commit's diff = the files that changed
+  to fix exactly one of the listed bugs. Cross-bug refactors
+  (env-var warning, safeUrl redactor, causeChain walker in the
+  proxy route) go in a single commit attributed to the bug that
+  motivated them; if no single bug motivates them, fold into a
+  follow-up "chore: harden X" commit. Pure docs commits (skill
+  pitfall codification, AGENTS.md deploy checklist) ship last so
+  the bug-fix history reads linearly before the docs polish.
+- **Quoting version numbers in bug reports: cross-check
+  `package.json` before stating them.** AGENTS.md's Tech stack
+  table is manually maintained and drifts. Example: AGENTS.md says
+  "Next.js 15" but `npm run build` reports "Next.js 16.2.7". If a
+  bug report says "the Next.js 15 route handler does X", an
+  operator who runs `npm run build` first will be momentarily
+  confused. Either update AGENTS.md (preferred — that's
+  `givetoget-docs`'s job) or quote the version from `package.json`
+  / the build output directly.
 - **Bug fixes touching already-shipped phases default to working-tree-only
   pending Aaron's end-to-end retest.** Aaron's bug reports follow a
   consistent shape (Bug: / Found during: / Symptom: / Root cause: /
