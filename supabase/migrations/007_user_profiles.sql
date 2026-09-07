@@ -29,7 +29,7 @@
 -- the correct privacy posture.
 --
 -- Pre-existing helpers reused:
---   * auth_workspace_id()        — current user's workspace_id
+--   * private.auth_workspace_id()        — current user's workspace_id
 --   * update_updated_at()        — BEFORE UPDATE trigger fn (001/002)
 -- =====================================================================
 
@@ -88,9 +88,9 @@ CREATE POLICY "user_profiles_select" ON user_profiles
       JOIN workspace_connections wc
         ON wc.status = 'accepted'
        AND (
-            (wc.requester_workspace_id = auth_workspace_id()
+            (wc.requester_workspace_id = private.auth_workspace_id()
              AND wc.recipient_workspace_id = wm.workspace_id)
-         OR (wc.recipient_workspace_id = auth_workspace_id()
+         OR (wc.recipient_workspace_id = private.auth_workspace_id()
              AND wc.requester_workspace_id = wm.workspace_id)
            )
       WHERE wm.user_id = user_profiles.user_id
@@ -145,14 +145,14 @@ CREATE POLICY "user_profiles_update" ON user_profiles
 --     SELECT user_id FROM workspace_members
 --     WHERE workspace_id IN (
 --       SELECT CASE
---                WHEN requester_workspace_id = auth_workspace_id()
+--                WHEN requester_workspace_id = private.auth_workspace_id()
 --                  THEN recipient_workspace_id
 --                ELSE requester_workspace_id
 --              END
 --       FROM workspace_connections
 --       WHERE status = 'accepted'
---         AND (requester_workspace_id = auth_workspace_id()
---              OR recipient_workspace_id = auth_workspace_id())
+--         AND (requester_workspace_id = private.auth_workspace_id()
+--              OR recipient_workspace_id = private.auth_workspace_id())
 --     )
 --   );
 --   -- should return B's members' profiles.

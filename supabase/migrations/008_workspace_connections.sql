@@ -18,7 +18,7 @@
 --     applies to which verb (accept/decline vs revoke).
 --
 -- Pre-existing helpers reused:
---   * auth_workspace_id()  — current user's workspace_id (workspace_members)
+--   * private.auth_workspace_id()  — current user's workspace_id (workspace_members)
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
@@ -86,8 +86,8 @@ ALTER TABLE workspace_connections ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "workspace_connections_select" ON workspace_connections
   FOR SELECT
   USING (
-    requester_workspace_id = auth_workspace_id()
-    OR recipient_workspace_id = auth_workspace_id()
+    requester_workspace_id = private.auth_workspace_id()
+    OR recipient_workspace_id = private.auth_workspace_id()
   );
 
 -- INSERT: any member of the requester workspace can invite.
@@ -96,7 +96,7 @@ CREATE POLICY "workspace_connections_select" ON workspace_connections
 CREATE POLICY "workspace_connections_insert" ON workspace_connections
   FOR INSERT
   WITH CHECK (
-    requester_workspace_id = auth_workspace_id()
+    requester_workspace_id = private.auth_workspace_id()
     AND requested_by = auth.uid()
   );
 
@@ -106,12 +106,12 @@ CREATE POLICY "workspace_connections_insert" ON workspace_connections
 CREATE POLICY "workspace_connections_update" ON workspace_connections
   FOR UPDATE
   USING (
-    requester_workspace_id = auth_workspace_id()
-    OR recipient_workspace_id = auth_workspace_id()
+    requester_workspace_id = private.auth_workspace_id()
+    OR recipient_workspace_id = private.auth_workspace_id()
   )
   WITH CHECK (
-    requester_workspace_id = auth_workspace_id()
-    OR recipient_workspace_id = auth_workspace_id()
+    requester_workspace_id = private.auth_workspace_id()
+    OR recipient_workspace_id = private.auth_workspace_id()
   );
 
 -- DELETE: denied. Status transitions only.
@@ -120,27 +120,27 @@ CREATE POLICY "workspace_connections_update" ON workspace_connections
 
 -- ---------------------------------------------------------------------
 -- workspace_members: minimal SELECT policy so the connection RLS
--- subqueries and `auth_workspace_id()` work. Members see only their
+-- subqueries and `private.auth_workspace_id()` work. Members see only their
 -- own workspace's membership rows.
 --
 -- Implementation note: this policy MUST NOT include any inline
 -- subquery against `workspace_members` itself. Doing so triggers
 -- "infinite recursion detected in policy for relation
 -- 'workspace_members'", because applying RLS to the subquery causes
--- Postgres to evaluate the policy recursively. `auth_workspace_id()`
+-- Postgres to evaluate the policy recursively. `private.auth_workspace_id()`
 -- is SECURITY DEFINER so it bypasses RLS when evaluating the caller's
 -- workspace_id.
 --
 -- NOTE: 002 left workspace_members RLS-enabled with no explicit SELECT
 -- policy, which means under default-deny a non-service-role caller
--- cannot see ANY row. `auth_workspace_id()` itself is SECURITY DEFINER
+-- cannot see ANY row. `private.auth_workspace_id()` itself is SECURITY DEFINER
 -- so it bypasses RLS, but downstream policies that compare to
--- `auth_workspace_id()` depend on `workspace_id` being the caller's
+-- `private.auth_workspace_id()` depend on `workspace_id` being the caller's
 -- own workspace — which is true. However, the "show co-workers on
 -- workspace page" UI cannot read other members without this policy —
 -- so we grant visibility to every row in any workspace the caller
--- belongs to (workspace_id = auth_workspace_id() covers the entire
--- workspace, since auth_workspace_id() returns the caller's workspace).
+-- belongs to (workspace_id = private.auth_workspace_id() covers the entire
+-- workspace, since private.auth_workspace_id() returns the caller's workspace).
 -- Cross-workspace membership visibility is intentionally NOT granted;
 -- that is gated by the workspace_connections SELECT policy above for
 -- the "My Network" page.
@@ -148,7 +148,7 @@ CREATE POLICY "workspace_connections_update" ON workspace_connections
 CREATE POLICY "workspace_members_select" ON workspace_members
   FOR SELECT
   USING (
-    workspace_id = auth_workspace_id()
+    workspace_id = private.auth_workspace_id()
   );
 
 -- ---------------------------------------------------------------------
@@ -166,14 +166,14 @@ CREATE POLICY "workspace_members_select" ON workspace_members
 CREATE OR REPLACE VIEW v_my_network_workspace_ids AS
   SELECT
     CASE
-      WHEN requester_workspace_id = auth_workspace_id()
+      WHEN requester_workspace_id = private.auth_workspace_id()
         THEN recipient_workspace_id
       ELSE requester_workspace_id
     END AS workspace_id
   FROM workspace_connections
   WHERE status = 'accepted'
-    AND (requester_workspace_id = auth_workspace_id()
-         OR recipient_workspace_id = auth_workspace_id());
+    AND (requester_workspace_id = private.auth_workspace_id()
+         OR recipient_workspace_id = private.auth_workspace_id());
 
 -- Grant SELECT to authenticated so RLS can use the view.
 -- Wrapped in DO because Supabase always has the role, but local
@@ -205,7 +205,7 @@ CREATE POLICY "contacts_network_select" ON contacts
   FOR SELECT
   USING (
     contributed_by_workspace_id IS NOT NULL
-    AND contributed_by_workspace_id <> auth_workspace_id()
+    AND contributed_by_workspace_id <> private.auth_workspace_id()
     AND contributed_by_workspace_id IN (
       SELECT workspace_id FROM v_my_network_workspace_ids
     )
