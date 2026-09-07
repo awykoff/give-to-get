@@ -164,6 +164,46 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   cloud, name the gap explicitly in the report rather than claiming
   closure. See `givetoget-backend` for the Edge-Function-specific
   variant of this trap.
+- **`AGENTS.md` is gated by a user-approval hook. Don't retry, don't
+  bypass, don't edit via another path.** Editing an always-loaded
+  context file (AGENTS.md is the canonical one — README.md,
+  CLAUDE.md, .cursorrules, and any other file the agent loads every
+  session are in the same category) trips a hook that prompts the
+  user for explicit consent. If the prompt times out without a
+  response, the hook rejects the write with a hard "silence is not
+  consent" error and the file-system tool returns a BLOCKED message
+  with explicit guidance: "Do NOT retry it or attempt the same edit
+  via another path (terminal, execute_code, etc.)." Respect the
+  hook literally — don't retry, don't try `sed`/cat via terminal,
+  don't `execute_code` a write. The right move is to surface the
+  proposed change in chat with the exact patch (or before/after
+  text), explicitly note it's blocked on user consent, and wait for
+  an explicit "go ahead" or an alternative instruction (e.g. "pin
+  package.json instead" or "skip the doc sync for this session").
+  Same rule applies if the hook prompts and you don't see a
+  response — don't assume silence means consent. This bit twice
+  in the Sept 2026 session (Next.js version sync card, the
+  env-var docs sync) and would have been the right move earlier
+  both times. The lesson generalizes: if you find yourself
+  thinking "I'll just try once more in a slightly different way,"
+  the answer is no.
+- **Re-read the current PRD/feature spec on disk before starting
+  any feature build. Don't trust earlier drafts.** Specs in this
+  project go through several scope revisions per session (the
+  Sept 2026 My Network feature went v1.1 → v1.5 in one afternoon).
+  Anything cached from an earlier read may be stale on three
+  counts: (a) decisions you thought were made may have been
+  reversed, (b) requirements may have been added (the v1.4 → v1.5
+  privacy/wall-off requirements were the binding hard rules, not
+  aspirational), (c) explicit "open questions" from earlier drafts
+  may now be "resolved" with answers that contradict what you
+  remember. The right pattern: read the current `PRD.md` (or
+  feature spec) in full at session start, ignore any cached
+  summaries you (or another agent) wrote earlier, and treat the
+  on-disk document as the only source of truth. After re-reading,
+  surface every ambiguity in one batched question rather than
+  dribbling — the user would rather answer four design decisions
+  in one form than have the build stop four times.
 
 ## Deploy checklist — load before any commit that touches production code
 

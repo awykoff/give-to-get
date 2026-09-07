@@ -55,6 +55,24 @@ lands that isn't yet reflected in the project docs.
   Each rule needs at least one on-disk artifact to point at (file
   path + the canonical helper or column name) so a reader can
   verify it without grepping.
+- **`AGENTS.md` is gated by a user-approval hook. Don't retry, don't
+  bypass.** This is a session-level hook on the always-loaded
+  context file (and anything in the same category: README.md,
+  CLAUDE.md, .cursorrules). The hook prompts the user for
+  explicit consent; on timeout it returns a BLOCKED error with
+  "silence is not consent" semantics and explicitly tells you to
+  NOT retry via another path (terminal, execute_code, etc.). The
+  right protocol when an AGENTS.md edit gets blocked: (a) surface
+  the exact proposed change in chat as a patch or before/after
+  text, (b) explicitly note it's blocked pending user consent,
+  (c) wait for an explicit "go ahead" or alternative. Don't try
+  `sed`, `printf`, or any other write path — the hook catches
+  all of them and the BLOCKED message is the contract. This
+  applies whether you're editing AGENTS.md directly or via an
+  autonomous worker dispatch — workers that hit this hook should
+  hand back, not retry. The companion lesson in
+  `givetoget-lead-developer` covers the broader "don't retry
+  blocked user-gated operations" rule.
 
 ## Verification
 
