@@ -204,6 +204,49 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   surface every ambiguity in one batched question rather than
   dribbling — the user would rather answer four design decisions
   in one form than have the build stop four times.
+- **Re-run verification from scratch before shipping, even when a
+  prior handback claims it's already green.** A handback comment
+  saying *"build was clean, don't redo the work, verify and ship"*
+  is a *claim* about the previous session's tree, not a *waiver*
+  of verification for this one. The two trees can differ in ways
+  that aren't visible from the diff (stale `node_modules`, an
+  uncommitted edit to a config file, an env var that's no longer
+  set, an `.env.local` that drifted). Re-running `tsc --noEmit`
+  and `npm run build` costs 30–90s on this repo and is the only
+  step that catches drift between "the work was correct" and "the
+  work is still correct now." The shipped report must show *this
+  session's* exit codes and route table — never paraphrase a
+  prior session's claim.
+- **Stale `.git/index.lock`.** If a prior terminal command exits
+  abnormally mid-git-operation (harness block, ctrl-C, OOM,
+  anything other than a clean exit), the lock file is left behind
+  and every subsequent `git add` / `git commit` fails with
+  *"Unable to create .git/index.lock: File exists. Another git
+  process seems to be running"*. Diagnose first, retry second:
+  `ls -la .git/index.lock` (zero-byte file = stale) and
+  `pgrep -f "git "` (must return nothing). Then `rm -f
+  .git/index.lock` and retry. The lock is just a marker — removing
+  it when no git process is alive is safe and idempotent.
+- **Cloud-side steps the agent can't run must ship as runbook
+  commands in the PR body, not as prose instructions.** Cards
+  frequently include a step the agent can't perform from the
+  local repo (apply a Supabase migration, run `vercel --prod`,
+  update an Auth-dashboard allow-list). The wrong shape is a PR
+  description that says *"user needs to apply 007 → 008 → 009 and
+  run vercel --prod"* — which puts the burden of reconstructing
+  the right command shape on the user mid-deploy, when mistakes
+  are most costly. The right shape: include all viable apply
+  paths (psql with `ON_ERROR_STOP=1`, the relevant CLI with
+  `--file`, the Dashboard SQL editor paste), the apply order with
+  the comment that documents it (e.g. `Apply order: 001, 002,
+  004, 005, 006, 007, 008` for this project's canonical
+  sequence — note 003 is intentionally absent), and a one-line
+  sanity-check query for each migration
+  (`SELECT proname, prosecdef FROM pg_proc WHERE proname =
+  'user_id_for_email'` after applying 009). For Vercel: include
+  `vercel login` → `vercel link` (one-time) → `vercel --prod`,
+  plus the env vars that must already be set in the Vercel
+  project. The PR body is the runbook, not a description of one.
 
 ## Deploy checklist — load before any commit that touches production code
 
