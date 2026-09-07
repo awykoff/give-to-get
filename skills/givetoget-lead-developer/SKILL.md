@@ -258,6 +258,27 @@ machine — no Vercel token, no Supabase CLI linked, no
 `supabase/config.toml`, no service-role key. The user runs the
 redeploy. The handoff is the contract.
 
+### Gates that already exist (added 2026-09-07 in PR #3)
+
+- **`scripts/check-migrations-applied.sh`** — fails CI if there are
+  migration files in the repo newer than what's recorded as applied
+  in `supabase_migrations.schema_migrations` on the target Supabase
+  project. Wired into `.github/workflows/migrations-check.yml`. Needs
+  `SUPABASE_MIGRATIONS_DB_URL` as a GitHub Actions secret. Skip with
+  `ALLOW_UNAPPLIED_MIGRATIONS=true` only when the migration was
+  applied via Dashboard SQL Editor (the bookkeeping table won't
+  reflect it).
+- **`scripts/secret-scan-staged.sh`** — scans the staged diff for
+  known credential prefixes (`sbp_`, `ghp_`, `sk-`, `AKIA`, etc.).
+  Warn-only by default; set `SECRET_SCAN_BLOCK=true` to fail the
+  commit. Pre-commit hook installer: `scripts/install-hooks.sh`.
+  Allowlist per-line via `# gitleaks:allow`. CI equivalent:
+  `.github/workflows/secret-scan.yml` (uses gitleaks directly with
+  `.gitleaks.toml` for entropy-based detection).
+- **`.gitleaks.toml`** — allowlist for known-safe patterns and the
+  test fixture paths. Update this when adding new prefix patterns to
+  the bash script so the two stay aligned.
+
 Run all that apply, in order:
 
 1. **Code only** (anything under `src/app/**`, components,
