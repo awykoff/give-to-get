@@ -6,7 +6,7 @@
 //   workspace_connections row, and returns it. The requester_workspace_id
 //   is the caller's workspace (from getWorkspaceContext). The
 //   requester MUST NOT be a member of the recipient's workspace (PRD:
-//   mutual acceptance — can't connect to yourself).
+//   mutual acceptance -- can't connect to yourself).
 //
 // GET /api/network/invites
 //   Returns the caller's pending invites split into incoming and
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Resolve the recipient's user_id from the email. The anon-keyed
-  // server client cannot read auth.users directly — PostgREST does not
+  // server client cannot read auth.users directly -- PostgREST does not
   // expose the auth schema, and using the service-role key from a
   // user-driven route handler would violate least-privilege. Instead
   // we call public.user_id_for_email(email), a SECURITY DEFINER RPC
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
   // so an anonymous (unauthenticated) request would be rejected by
   // Postgres at function-call time.
   //
-  // The RPC returns NULL when no user matches — same shape as the
+  // The RPC returns NULL when no user matches -- same shape as the
   // "user not found" branch the route already handles.
   const { data: recipientUserId, error: userErr } = await supabase.rpc(
     "user_id_for_email",
@@ -104,11 +104,26 @@ export async function POST(req: NextRequest) {
   }
 
   // Look up the recipient's workspace.
-  const { data: recipientMember, error: memberErr } = await supabase
-    .from("workspace_members")
-    .select("workspace_id")
-    .eq("user_id", recipientUserId)
-    .maybeSingle();
+  //
+  // This MUST go through the workspace_id_for_user() RPC (010), not a
+  // direct .from("workspace_members") query. That query runs under the
+  // CALLER's session and is subject to RLS -- workspace_members_select
+  // (008) only allows a caller to see rows in their OWN workspace, so a
+  // genuine cross-workspace invite recipient could never be found this
+  // way (the route always fell into the "Recipient has no workspace"
+  // branch, even when the recipient genuinely had one). This is RLS
+  // working exactly as designed; the client-side query was simply the
+  // wrong tool for a cross-workspace lookup.
+  //
+  // workspace_id_for_user() is a SECURITY DEFINER RPC (see
+  // 010_workspace_lookup_helper.sql) that bypasses that RLS scope for
+  // this one narrow, non-sensitive lookup and returns ONLY the bare
+  // workspace_id -- no member list, no profile fields, no email --
+  // so it stays within the PRD's privacy scope for this route.
+  const { data: recipientWorkspaceId, error: memberErr } = await supabase.rpc(
+    "workspace_id_for_user",
+    { p_user_id: recipientUserId },
+  );
 
   if (memberErr) {
     return NextResponse.json(
@@ -116,15 +131,12 @@ export async function POST(req: NextRequest) {
       { status: 500 },
     );
   }
-  if (!recipientMember) {
+  if (!recipientWorkspaceId) {
     return NextResponse.json(
       { error: "Recipient has no workspace." },
       { status: 404 },
     );
   }
-
-  const recipientWorkspaceId = (recipientMember as { workspace_id: string })
-    .workspace_id;
 
   if (recipientWorkspaceId === callerWorkspaceId) {
     return NextResponse.json(
@@ -135,7 +147,7 @@ export async function POST(req: NextRequest) {
 
   // Insert the pending row. The partial unique index on
   // (LEAST/GREATEST) WHERE status IN ('pending','accepted') handles
-  // dedup — we don't need to pre-check.
+  // dedup -- we don't need to pre-check.
   const { data, error: insertErr } = await supabase
     .from("workspace_connections")
     .insert({
