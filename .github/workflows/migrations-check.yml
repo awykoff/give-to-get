@@ -1,0 +1,38 @@
+# .github/workflows/migrations-check.yml
+#
+# Fails the PR if any migration file in supabase/migrations/ is
+# present in the branch but NOT recorded as applied in the target
+# Supabase project's supabase_migrations.schema_migrations table.
+#
+# See scripts/check-migrations-applied.sh for the full rationale.
+
+name: migrations-applied
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+  workflow_dispatch:
+
+jobs:
+  check-migrations-applied:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install psql
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -yqq postgresql-client
+
+      - name: Run check
+        env:
+          SUPABASE_MIGRATIONS_DB_URL: ${{ secrets.SUPABASE_MIGRATIONS_DB_URL }}
+          ALLOW_UNAPPLIED_MIGRATIONS: ${{ vars.ALLOW_UNAPPLIED_MIGRATIONS }}
+        run: bash scripts/check-migrations-applied.sh

@@ -1,0 +1,18 @@
+#!/bin/bash
+# scripts/hooks/pre-commit
+#
+# Pre-commit hook that runs scripts/secret-scan-staged.sh against the
+# staged diff. Installed via scripts/install-hooks.sh — do not edit in
+# place; copy from scripts/hooks/pre-commit.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCAN="$REPO_ROOT/scripts/secret-scan-staged.sh"
+
+if [ ! -x "$SCAN" ]; then
+  echo "::warning::secret-scan-staged.sh not found at $SCAN — skipping scan." >&2
+  exit 0
+fi
+
+bash "$SCAN"
