@@ -1,7 +1,7 @@
 ---
 name: givetoget-backend
 description: Supabase Edge Functions for give-to-get.com's import and export pipelines, the thin Next.js API routes that gate them, and the deploy-discipline traps that surface when on-disk fixes don't reach production
-version: 1.3.0
+version: 1.4.0
 metadata:
   hermes:
     tags: [supabase, deno, edge-functions, vercel, deploy-discipline, dedup, givetoget]

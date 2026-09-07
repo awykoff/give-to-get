@@ -7,6 +7,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/contacts": "Contacts",
   "/import": "Import",
   "/credits": "Credits",
+  "/settings": "Settings",
+  "/network": "My Network",
 };
 
 interface TopBarProps {

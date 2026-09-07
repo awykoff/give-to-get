@@ -56,6 +56,34 @@ export default function ContactsTable({ filters, onSelectionChange }: Props) {
       .range(pageNum * PAGE_SIZE, (pageNum + 1) * PAGE_SIZE - 1)
       .order("created_at", { ascending: false });
 
+    // Defensive exclusion (PRD §5.7 + Critical Rules):
+    // The new RLS policy `contacts_network_select` (added by
+    // 008_workspace_connections.sql) intentionally makes
+    // connection-gated contacts visible to the caller's anon-keyed
+    // query when the caller has an accepted workspace_connections
+    // row to the contributing workspace. RLS alone cannot enforce
+    // "only visible in My Network", so the general Contacts page
+    // must explicitly filter out rows that would leak via that
+    // path. We do this by passing the embedded SELECT to
+    // .not("col", "in", "(SELECT ...)") — PostgREST executes the
+    // inner SELECT on behalf of the caller, RLS-filtered, and
+    // returns only the workspaces the caller has an accepted
+    // connection WITH.
+    //
+    // We use the v_my_network_workspace_ids view (defined in
+    // 008_workspace_connections.sql) rather than inlining the
+    // CASE/LEAST/GREATEST logic — the view is the canonical
+    // helper, already RLS-tested, and GRANTed to authenticated.
+    //
+    // This is a security boundary. DO NOT remove it without reading
+    // the privacy rule in PRD §7 and confirming the Contacts page's
+    // own query path is not the leak vector it once was.
+    query = query.not(
+      "contributed_by_workspace_id",
+      "in",
+      "(SELECT workspace_id FROM v_my_network_workspace_ids)",
+    );
+
     if (filters.verticals.length > 0) {
       query = query.in("vertical", filters.verticals);
     }

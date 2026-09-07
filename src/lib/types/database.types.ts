@@ -179,6 +179,18 @@ export interface WorkspaceContactAccessRow {
   unlocked_at: string;
 }
 
+// user_profiles — Settings profile surface. Per-user; one row per
+// auth.users id; RLS-owned; permanently walled off from contacts.
+// Schema: supabase/migrations/007_user_profiles.sql.
+export interface UserProfilesRow {
+  user_id: string;
+  first_name: string;
+  last_name: string;
+  phone_number: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Insert / Update shapes
 //
@@ -355,6 +367,7 @@ export interface Database {
         Row: WorkspaceContactAccessRow;
         Insert: WorkspaceContactAccessInsert;
       };
+      user_profiles: { Row: UserProfilesRow };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
