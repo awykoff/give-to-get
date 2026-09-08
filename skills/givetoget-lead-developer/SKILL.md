@@ -164,27 +164,42 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   cloud, name the gap explicitly in the report rather than claiming
   closure. See `givetoget-backend` for the Edge-Function-specific
   variant of this trap.
-- **`AGENTS.md` is gated by a user-approval hook. Don't retry, don't
+- **`AGENTS.md` (and other always-loaded context files like `README.md`, `CLAUDE.md`, `.cursorrules`) is gated by a user-approval hook. Don't retry, don't
   bypass, don't edit via another path.** Editing an always-loaded
-  context file (AGENTS.md is the canonical one — README.md,
-  CLAUDE.md, .cursorrules, and any other file the agent loads every
-  session are in the same category) trips a hook that prompts the
-  user for explicit consent. If the prompt times out without a
-  response, the hook rejects the write with a hard "silence is not
-  consent" error and the file-system tool returns a BLOCKED message
-  with explicit guidance: "Do NOT retry it or attempt the same edit
-  via another path (terminal, execute_code, etc.)." Respect the
-  hook literally — don't retry, don't try `sed`/cat via terminal,
-  don't `execute_code` a write. The right move is to surface the
-  proposed change in chat with the exact patch (or before/after
-  text), explicitly note it's blocked on user consent, and wait for
-  an explicit "go ahead" or an alternative instruction (e.g. "pin
-  package.json instead" or "skip the doc sync for this session").
+  context file trips a hook that prompts the user for explicit
+  consent. If the prompt times out without a response, the hook
+  rejects the write with a hard "silence is not consent" error and
+  the file-system tool returns a BLOCKED message with explicit
+  guidance: "Do NOT retry it or attempt the same edit via another
+  path (terminal, execute_code, etc.)." Respect the hook literally
+  — don't retry, don't try `sed`/cat via terminal, don't
+  `execute_code` a write. The right moves, in order:
+  1. **Document the change in the operator-facing artifact instead** —
+     if the blocked edit is documenting a new env var / setup step /
+     script, put it in the runbook (`docs/operations/...md`) and
+     leave a one-line "follow-up: add to AGENTS.md env vars list"
+     note in the PR description. The PR itself is reviewable
+     without AGENTS.md being updated; AGENTS.md is for cross-cutting
+     documentation, not for first-pass correctness.
+  2. **Surface the proposed change in chat** with the exact patch
+     (or before/after text), explicitly note it's blocked on user
+     consent, and wait for an explicit "go ahead" or an alternative
+     instruction (e.g. "pin package.json instead" or "skip the doc
+     sync for this session").
+  3. **When the user explicitly approves, do it as a small follow-up
+     commit** on the same branch (or a one-line branch off main) —
+     keep the diff to the single protected-file line, push as a
+     separate PR or as part of the same PR if the branch hasn't been
+     opened yet. Don't bundle AGENTS.md edits into larger
+     documentation commits; small diffs are easier for the user to
+     approve on review.
+
   Same rule applies if the hook prompts and you don't see a
-  response — don't assume silence means consent. This bit twice
-  in the Sept 2026 session (Next.js version sync card, the
-  env-var docs sync) and would have been the right move earlier
-  both times. The lesson generalizes: if you find yourself
+  response — don't assume silence means consent. This bit three
+  times in the Sept 2026 session (the env-var docs sync for
+  `RESEND_API_KEY`, an earlier Next.js version sync, and an earlier
+  attempt to update the production-env-vars section after the CI
+  gates merged). The lesson generalizes: if you find yourself
   thinking "I'll just try once more in a slightly different way,"
   the answer is no.
 - **Re-read the current PRD/feature spec on disk before starting
@@ -366,6 +381,53 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   ownership when the agents disagree. The trap generalizes: if
   you're considering adding an agent to fix a problem caused by
   agent coordination, add a checklist or a CI gate instead.
+- **Side-effect success is not part of the route's HTTP contract
+  once the source-of-truth write has committed.** Sept 2026 My
+  Network invite email (Issue #11): the route writes the
+  `workspace_connections` row, then fires an outbound email via
+  Resend. The correct failure-mode contract is: the HTTP response
+  is determined by the row insert alone. If the email fails, the
+  route still returns 201; the invitee can find the request in
+  `/network` regardless. The email-send function is best-effort,
+  never throws, and logs to stderr on failure. Concretely:
+  - **`void sideEffect(...)`, not `await`**, when the source-of-truth
+    write has already succeeded. Awaiting adds Resend's typical
+    200–500ms latency to every successful invite; fire-and-forget
+    means the lambda's remaining lifetime is enough for Resend to
+    accept the POST in v1 volume.
+  - **Side effects must never throw.** If your side-effect helper
+    can throw, wrap it in try/catch inside the helper (not the
+    route). The route's success path doesn't know or care whether
+    the side effect landed.
+  - **Don't retry inline.** The provider's API has its own retry
+    semantics; double-retry masks transient outages. If you find
+    yourself wanting retry-on-failure here, the right shape is a
+    background queue, not in-request retry.
+  - **Log failures at `console.error` with structured fields** (to,
+    error message, status code). On Vercel this lands in the
+    function logs where it can be alerted on. Don't log success at
+    info level (noisy at any real volume).
+
+  The general rule: **the DB write is the source of truth; side
+  effects are best-effort.** Same shape applies to audit-log
+  inserts, analytics events, webhook pings, push notifications,
+  search-index updates. If any of those fail, the user-facing
+  request should still succeed — the alternative is converting a
+  transient third-party outage into a 500 on a request that
+  otherwise worked.
+- **Verify the branch name matches the change before committing.**
+  Sept 2026 Issue #11 email work: I committed the email feature
+  onto `ananda/soften-010-inferred-caveat` (a branch created for
+  the SQL caveat softening PR, not for the email feature), then
+  had to `git reset --soft HEAD~1`, switch branches, and recommit.
+  The recovery was clean but cost extra turns and produced a
+  brief moment where the branch tip contained work that didn't
+  match its name. The right pattern: before `git commit`, run
+  `git branch --show-current` and `git status --short` together;
+  if the branch name doesn't describe what's about to land, branch
+  off main first and commit there instead. Two commits on one branch
+  that covers unrelated concerns is worse than one branch per
+  concern, even when both are small.
 
 - **Migration drift is bidirectional — check both directions, not
   just "are my repo files applied."** Forward drift (a repo file
