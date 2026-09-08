@@ -1,0 +1,69 @@
+# .gitleaks.toml
+#
+# gitleaks allowlist for the give-to-get project. Two purposes:
+#   1. Document false positives we have accepted (so future maintainers
+#      don't chase them again).
+#   2. Tell gitleaks to skip our own fixtures, test data, and the
+#      secret-scan scripts themselves (which contain prefix strings
+#      used to detect other secrets).
+#
+# The CI scan uses this config; the pre-commit script does not (it is
+# regex-only and intentionally narrow). Keep both in mind when adding
+# a new prefix.
+#
+# Convention for inline allowlist (when a single line is a known false
+# positive, e.g. a doc URL):
+#   Append `# gitleaks:allow` to that line. gitleaks reads it.
+#   Don't use that to silence a real secret — rotate it instead.
+
+title = "give-to-get gitleaks config"
+
+[allowlist]
+  description = "Project-level allowlist"
+  paths = [
+    # Scripts that contain prefix strings by design
+    '''scripts/secret-scan-staged\.sh''',
+    '''scripts/hooks/pre-commit''',
+
+    # Test fixtures and Playwright specs (often contain example creds)
+    '''tests/.*\.spec\.ts''',
+    '''tests/fixtures/.*''',
+
+    # Lock files and generated artifacts
+    '''package-lock\.json''',
+    '''yarn\.lock''',
+    '''pnpm-lock\.yaml''',
+    '''\.next/.*''',
+    '''node_modules/.*''',
+  ]
+
+  regexes = [
+    # Example tokens used in documentation (e.g. README) — never real
+    '''(?i)\bexample\.token\.[a-z0-9]{20,}\b''',
+    '''\bsbp_REPLACE_ME_[A-Z0-9]{8,}\b''',
+    '''\bghp_REPLACE_ME_[A-Za-z0-9]{8,}\b''',
+  ]
+
+[[rules]]
+  id = "supabase-personal-access-token"
+  description = "Supabase personal access token (sbp_*)"
+  regex = '''\bsbp_[a-f0-9]{40,}\b'''
+  tags = ["secret", "supabase"]
+
+[[rules]]
+  id = "github-pat-classic"
+  description = "GitHub classic personal access token (ghp_*)"
+  regex = '''\bghp_[A-Za-z0-9]{36,}\b'''
+  tags = ["secret", "github"]
+
+[[rules]]
+  id = "openai-style-api-key"
+  description = "OpenAI / Anthropic-style API key (sk-*)"
+  regex = '''\bsk-[A-Za-z0-9_\-]{20,}\b'''
+  tags = ["secret", "openai"]
+
+[[rules]]
+  id = "aws-access-key-id"
+  description = "AWS access key ID"
+  regex = '''\b(AKIA|ASIA)[0-9A-Z]{16}\b'''
+  tags = ["secret", "aws"]
