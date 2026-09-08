@@ -1,9 +1,19 @@
 #!/bin/bash
 # scripts/check-migrations-applied.sh
 #
-# Fail if any migration file in supabase/migrations/ is present in the
-# repo but NOT recorded as applied in the target Supabase project's
-# supabase_migrations.schema_migrations table.
+# Bidirectional check between this repo's supabase/migrations/*.sql files
+# and the target Supabase project's supabase_migrations.schema_migrations
+# table.
+#
+# Forward check (the original): fail if a migration file is present in
+# the repo but NOT recorded as applied on the target. Catches the case
+# where the code ships ahead of the database.
+#
+# Reverse check (added 2026-09-07 after PR #3): warn if a migration is
+# recorded as applied on the target but has NO source file in this repo.
+# Catches the inverse failure mode — a migration that was applied to
+# prod (e.g. via Dashboard SQL Editor) but whose source SQL was never
+# committed. Default mode is WARN; promote with STRICT_DB_MIGRATIONS=true.
 #
 # Why this exists
 # ----------------
@@ -11,7 +21,14 @@
 # merged cleanly. They were never applied to the target Supabase project,
 # and the production app crashed on a function the migrations were
 # supposed to create. CI verified the code; nothing verified the
-# database the code depended on. This check closes that gap at PR time.
+# database the code depended on. The forward check closes that gap.
+#
+# PR #3 (also 2026-09-07) was the cross-workspace RLS fix. Its migration
+# (010_workspace_lookup_helper.sql) was applied to prod and recorded in
+# schema_migrations, but the source SQL was never committed to the repo
+# — exactly the reverse failure mode. The reverse check closes that gap
+# at PR time so the next migration-applied-out-of-band incident shows
+# up as a CI warning instead of as a future-rebuild surprise.
 #
 # Required environment
 # --------------------
@@ -22,7 +39,7 @@
 #                                Settings → Database → Connection string.
 #                                MUST be a secret — do not echo in CI logs.
 #
-#   ALLOW_UNAPPLIED_MIGRATIONS  (optional) Set to "true" to skip the check.
+#   ALLOW_UNAPPLIED_MIGRATIONS  (optional) Set to "true" to skip BOTH checks.
 #                                Use only for migrations intentionally
 #                                applied via Dashboard SQL Editor (the
 #                                `supabase_migrations.schema_migrations`
@@ -33,10 +50,19 @@
 #                                NOT in schema_migrations; set this on
 #                                those PRs until a repair backfill lands.
 #
+#   STRICT_DB_MIGRATIONS        (optional) Set to "true" to promote the
+#                                reverse (DB-only) check from warn to
+#                                error. Default warn-only because the
+#                                repo being behind prod is an audit-hygiene
+#                                issue, not necessarily a deploy blocker.
+#
 # Behavior
 # --------
-#   exit 0  all migration files have matching rows in schema_migrations
-#   exit 1  one or more migrations are unapplied (or DB unreachable)
+#   exit 0  forward check passes (all repo files applied); reverse check
+#           reports no DB-only migrations, OR reports DB-only migrations
+#           in warn-only mode.
+#   exit 1  forward check fails (one or more repo files unapplied), OR
+#           STRICT_DB_MIGRATIONS=true and the reverse check finds anything.
 #
 # Reads filenames matching:  <digits>_<name>.sql
 # (Supabase CLI naming convention; tolerates the intentional gap at 003.)
@@ -112,6 +138,51 @@ done
 
 if [ ${#UNAPPLIED[@]} -eq 0 ]; then
   echo "OK: ${#MIG_FILES[@]} migration files, all recorded as applied on target."
+
+  # ---------------------------------------------------------------------
+  # Reverse-direction check: are there applied migrations in the target
+  # DB that have NO matching source file in this repo? This catches the
+  # inverse failure mode of the check above — a migration that was
+  # applied to prod (e.g. via Dashboard SQL Editor) but whose source
+  # file was never committed. PR #1 on 2026-09-07 surfaced exactly this
+  # shape (010_workspace_lookup_helper.sql was applied + recorded in
+  # schema_migrations, but the .sql file was never in the repo).
+  #
+  # Default mode: WARN (stderr, exit 0). The repo being behind prod
+  # is an audit-hygiene issue, not necessarily a deploy blocker.
+  # Set STRICT_DB_MIGRATIONS=true to promote to error.
+  # ---------------------------------------------------------------------
+  REPO_BASES="$(printf '%s\n' "${MIG_FILES[@]}" | xargs -n1 basename 2>/dev/null | sort -u)"
+
+  DB_ONLY=()
+  while IFS= read -r v; do
+    [ -z "$v" ] && continue
+    if ! echo "$REPO_BASES" | grep -qx "$v"; then
+      DB_ONLY+=("$v")
+    fi
+  done <<< "$APPLIED_SET"
+
+  if [ ${#DB_ONLY[@]} -gt 0 ]; then
+    echo "::warning::${#DB_ONLY[@]} migration(s) recorded as applied on target but MISSING from this repo:" >&2
+    for d in "${DB_ONLY[@]}"; do
+      echo "  - $d" >&2
+    done
+    echo >&2
+    echo "This is the inverse of the unapplied check above: applied to prod" >&2
+    echo "but no source file in version control. A clean checkout cannot" >&2
+    echo "reproduce, audit, or re-test these migrations. Common cause:" >&2
+    echo "applying via Dashboard SQL Editor without committing the .sql." >&2
+    echo >&2
+    echo "Fix: write the source .sql file (mirroring what's in prod) and" >&2
+    echo "commit it under supabase/migrations/. Mirrors PR #2's 007/008" >&2
+    echo "qualification backfill pattern." >&2
+
+    if [ "${STRICT_DB_MIGRATIONS:-false}" = "true" ]; then
+      echo "STRICT_DB_MIGRATIONS=true — treating warning as error." >&2
+      exit 1
+    fi
+  fi
+
   exit 0
 fi
 
