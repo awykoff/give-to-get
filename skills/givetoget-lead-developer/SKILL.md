@@ -367,6 +367,30 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   you're considering adding an agent to fix a problem caused by
   agent coordination, add a checklist or a CI gate instead.
 
+- **Migration drift is bidirectional — check both directions, not
+  just "are my repo files applied."** Forward drift (a repo file
+  not in `supabase_migrations.schema_migrations`) is the easy
+  half to think about. Reverse drift (an entry in
+  `schema_migrations` has no matching repo file) is the easy
+  half to forget. It surfaced in this project on 2026-09-07 as
+  `010_workspace_lookup_helper.sql`: the function existed in prod
+  and was recorded in `schema_migrations`, but the source SQL was
+  never committed to the repo. The route called the function, the
+  route comment referenced the .sql file by name, and the file did
+  not exist. A clean checkout could not reproduce, audit, or
+  re-test the migration. The current `scripts/check-migrations-applied.sh`
+  covers both directions (forward fails, reverse warns; promote
+  the reverse check to error with `STRICT_DB_MIGRATIONS=true`).
+  When you can't reach the prod DB to diff against, the correct
+  move is to write the missing .sql by inference from the route's
+  usage, mark the file and the commit explicitly as **INFERRED,
+  NOT VERIFIED AGAINST PROD**, and include the exact queries a
+  person with prod SQL access should run to amend any differences
+  (typically `pg_get_functiondef` plus an
+  `information_schema.routine_privileges` query). The full
+  diagnose-and-write recipe is in
+  `references/migration-drift-diagnosis.md`.
+
 ## Deploy checklist — load before any commit that touches production code
 
 The on-disk change is step one of "done," not the whole thing. The
