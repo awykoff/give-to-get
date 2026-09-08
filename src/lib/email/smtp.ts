@@ -1,6 +1,9 @@
-// src/lib/email/resend.ts
+// src/lib/email/smtp.ts
 //
-// Thin Resend HTTP client. One function for v1: sendInviteEmail.
+// Thin SMTP email client for the network-invite notification flow.
+// Uses nodemailer (https://nodemailer.com/) against the project's
+// existing email hosting's SMTP capability -- no third-party service
+// signup required.
 //
 // Scope (minimal v1, per Issue #11):
 //   - Plain-ish transactional email.
@@ -8,10 +11,13 @@
 //     back into the app at /network to accept/decline.
 //   - No HTML polish, no react-email templates, no attachments.
 //
-// Why no SDK:
-//   - Resend's HTTP API is small enough (POST /v1/emails) that the
-//     native fetch in the Vercel runtime is sufficient.
-//   - One fewer npm dependency to vet and version-pin.
+// Why SMTP and not Resend/Postmark/SES:
+//   - Aaron already pays for and controls a hosting account with
+//     SMTP capability. Reusing it avoids a new account, new
+//     billing relationship, and new domain-verification cycle.
+//   - The sending domain is already configured and warmed on
+//     that host, which improves deliverability vs. a fresh
+//     provider.
 //
 // Failure-mode semantics (also captured in docs/operations/network-
 // invite-email-setup.md and ADR 0002):
@@ -19,22 +25,15 @@
 //     the email send fails, the invite still exists and the recipient
 //     can see it in-app. So this function is best-effort: it logs
 //     and returns void. It does NOT throw, because throwing here
-//     would convert a transient email failure into a 500 on a
+//     would convert a transient SMTP failure into a 500 on a
 //     request that otherwise succeeded (the invite was created).
-//   - We do NOT retry inline. Retries would mask transient Resend
-//     outages that Resend's own infrastructure already retries at
-//     the API layer. If you find yourself wanting retry-on-failure
+//   - We do NOT retry inline. Retries would mask transient outages
+//     that the SMTP layer's own retry semantics already handle at
+//     a lower level. If you find yourself wanting retry-on-failure
 //     here, the right place is a background queue, not in the
 //     request path.
-//
-// Why not an Edge Function:
-//   - Per the chosen architecture for Issue #11 (Claude cloud,
-//     2026-09-08): the email send lives in the Vercel-deployed
-//     Next.js route, not a Supabase Edge Function. No new infra.
-//   - Trade-off: every cold start of this route costs a tiny amount
-//     of latency from the email send. For v1 (low invite volume)
-//     this is fine. If invite volume grows, move to a background
-//     queue / Edge Function. See ADR 0002.
+
+import nodemailer from "nodemailer";
 
 const FROM_ADDRESS = "notifications@infinitekb.com";
 const FROM_NAME = "give-to-get";
@@ -52,13 +51,32 @@ interface SendInviteEmailArgs {
   recipientEmailLocalPart: string;
 }
 
-interface ResendSuccess {
-  id: string;
+interface SmtpConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
 }
-interface ResendError {
-  name?: string;
-  message?: string;
-  statusCode?: number;
+
+function readSmtpConfig(): SmtpConfig | null {
+  const host = process.env.SMTP_HOST;
+  const port = process.env.SMTP_PORT;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASSWORD;
+  // Require all four. If any is missing, return null so the caller
+  // skips the send and logs a clear message. Same best-effort
+  // shape as the Resend version: missing env == skip, not fail.
+  if (!host || !port || !user || !pass) {
+    return null;
+  }
+  // secure: true means implicit TLS on port 465 (the project's
+  // setup per the setup note). If the host moves to port 587 with
+  // STARTTLS, the operator can set SMTP_SECURE=false to flip this.
+  const secure = process.env.SMTP_SECURE !== "false";
+  const parsedPort = Number.parseInt(port, 10);
+  if (Number.isNaN(parsedPort)) return null;
+  return { host, port: parsedPort, secure, user, pass };
 }
 
 /**
@@ -68,70 +86,77 @@ interface ResendError {
  * email failure as an invite failure.
  */
 export async function sendInviteEmail(args: SendInviteEmailArgs): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    // Not throwing on purpose: see file header. If the var is unset,
-    // we want this to be visible in logs (so the deploy is flagged)
-    // but not 500 the request. The invite row is already created.
+  const config = readSmtpConfig();
+  if (!config) {
+    // Not throwing on purpose: see file header. If the vars are
+    // unset, we want this to be visible in logs (so the deploy is
+    // flagged) but not 500 the request. The invite row is already
+    // created.
     console.error(
-      "[email] RESEND_API_KEY is not set; skipping invite email send to",
+      "[email] SMTP_HOST/PORT/USER/PASSWORD not all set; skipping invite email send to",
       args.to,
     );
     return;
   }
 
-  const body = {
-    from: `${FROM_NAME} <${FROM_ADDRESS}>`,
-    to: [args.to],
-    subject: SUBJECT,
-    text: buildTextBody(args),
-    html: buildHtmlBody(args),
-  };
+  const text = buildTextBody(args);
+  const html = buildHtmlBody(args);
 
+  // nodemailer creates a new transporter per send. This is the
+  // recommended pattern for low-volume transactional email: it
+  // avoids connection-pool state leaking across sends, and the
+  // connection setup cost (a single TLS handshake) is negligible
+  // compared to the rest of the route's work.
+  let transporter: nodemailer.Transporter;
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+    transporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: {
+        user: config.user,
+        pass: config.pass,
       },
-      body: JSON.stringify(body),
     });
-
-    if (!res.ok) {
-      // Capture status + a short error summary without echoing the
-      // body (which may contain the email content).
-      let parsed: ResendError | null = null;
-      try {
-        parsed = (await res.json()) as ResendError;
-      } catch {
-        // ignore JSON parse failure -- we still log the status
-      }
-      console.error(
-        "[email] Resend send failed",
-        JSON.stringify({
-          to: args.to,
-          status: res.status,
-          resendError: parsed,
-        }),
-      );
-      return;
-    }
-
-    // Success path. We don't log success at info level (would be
-    // noisy at invite volume); failures are logged at error level
-    // above. If you want a success audit trail, log here.
-    const success = (await res.json()) as ResendSuccess;
-    return;
   } catch (e) {
-    // Network-level failure (DNS, TLS, connection reset). The invite
-    // row is still in the DB; the recipient can find it in-app.
+    // createTransport throws synchronously on misconfiguration (e.g.
+    // invalid port). Same best-effort shape: log, return void.
     console.error(
-      "[email] Resend request threw",
+      "[email] SMTP transporter creation failed",
       e instanceof Error ? e.message : String(e),
       { to: args.to },
     );
     return;
+  }
+
+  try {
+    await transporter.sendMail({
+      from: `${FROM_NAME} <${FROM_ADDRESS}>`,
+      to: [args.to],
+      subject: SUBJECT,
+      text,
+      html,
+    });
+    // Success path. We don't log success at info level (would be
+    // noisy at any real volume); failures are logged at error
+    // level. If you want a success audit trail, log here.
+  } catch (e) {
+    // Network-level or SMTP-protocol failure. The invite row is
+    // still in the DB; the recipient can find it in-app.
+    console.error(
+      "[email] SMTP sendMail failed",
+      e instanceof Error ? e.message : String(e),
+      { to: args.to },
+    );
+  } finally {
+    // Close the transporter so we don't leak the connection. Best
+    // effort; if it throws, ignore -- we're already in a
+    // cleanup path.
+    try {
+      transporter.close();
+    } catch {
+      // intentional: nothing useful to do here
+    }
   }
 }
 

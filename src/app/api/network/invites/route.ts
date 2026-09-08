@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspaceContext } from "@/lib/workspace-credits";
 import { getMyPendingInvites } from "@/lib/network";
-import { sendInviteEmail } from "@/lib/email/resend";
+import { sendInviteEmail } from "@/lib/email/smtp";
 
 export async function GET() {
   try {
@@ -189,7 +189,7 @@ export async function POST(req: NextRequest) {
   // never throws; we don't await-and-catch because we want to
   // return the 201 immediately. Side-effect is fire-and-forget
   // (no client visibility into email status). See
-  // src/lib/email/resend.ts for the failure-mode contract.
+  // src/lib/email/smtp.ts for the failure-mode contract.
   //
   // We look up the inviter workspace name here (RLS allows it: the
   // caller is, by definition, a member of their own workspace).
