@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkspaceContext } from "@/lib/workspace-credits";
 import { getMyPendingInvites } from "@/lib/network";
+import { sendInviteEmail } from "@/lib/email/resend";
 
 export async function GET() {
   try {
@@ -181,6 +182,39 @@ export async function POST(req: NextRequest) {
       { status: 500 },
     );
   }
+
+  // Send the notification email. The invite row is already
+  // committed -- if the email send fails, the invitee can still
+  // see the request in-app. sendInviteEmail is best-effort and
+  // never throws; we don't await-and-catch because we want to
+  // return the 201 immediately. Side-effect is fire-and-forget
+  // (no client visibility into email status). See
+  // src/lib/email/resend.ts for the failure-mode contract.
+  //
+  // We look up the inviter workspace name here (RLS allows it: the
+  // caller is, by definition, a member of their own workspace).
+  // If the lookup fails (extremely unlikely under RLS), fall back
+  // to a generic name in the email body so the email still goes
+  // out with something reasonable.
+  let inviterWorkspaceName = "A give-to-get workspace";
+  try {
+    const { data: ws } = await supabase
+      .from("workspaces")
+      .select("name")
+      .eq("id", callerWorkspaceId)
+      .single();
+    if (ws?.name) inviterWorkspaceName = ws.name;
+  } catch {
+    // intentional: fall through to the default name
+  }
+
+  // Fire-and-forget the email send so the 201 isn't blocked on
+  // Resend's network latency. We don't await this Promise.
+  void sendInviteEmail({
+    to: email,
+    inviterWorkspaceName,
+    recipientEmailLocalPart: email.split("@")[0] ?? "",
+  });
 
   return NextResponse.json(data, { status: 201 });
 }
