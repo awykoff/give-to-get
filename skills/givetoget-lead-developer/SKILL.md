@@ -227,6 +227,74 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   `pgrep -f "git "` (must return nothing). Then `rm -f
   .git/index.lock` and retry. The lock is just a marker — removing
   it when no git process is alive is safe and idempotent.
+- **GitHub Issues is the canonical bug tracker; Lessons and Kanban
+  are secondary, with cross-links.** This project settled on
+  GitHub Issues on `awykoff/give-to-get` as the shared record of
+  what's broken and what's fixed — one place Aaron, this session,
+  and the cloud-side Claude window can all read and write. The
+  Obsidian `Lessons/` notes and the Kanban board remain useful for
+  *this session's* working narrative, but they're not the primary
+  record. Concrete consequences:
+  - When a bug is filed, open a GitHub Issue using the repo's
+    label scheme (`severity:p0/p1/p2/p3`, `area:migrations/rls/auth/
+    ui/...`, plus the default `bug` label). Don't write the bug up
+    only in a chat transcript or a vault note.
+  - When fixing a bug, close the Issue with a short verification
+    note (what broke, what you changed, how you confirmed it) and
+    reference the Issue number/URL in the PR description.
+  - When writing an Obsidian lesson note, link the related
+    Issues by URL in the frontmatter `related` field and in the
+    body, not just the PR number. Issues survive PR close; PR
+    numbers can be misattributed (see the next pitfall).
+  - The Kanban card IDs go in a lesson note's `kanban_ids` field
+    only if they correspond to *real* cards on the Kanban board.
+    If you're writing a lesson from memory and the card IDs are
+    uncertain, leave the field empty rather than guessing.
+- **Don't paraphrase PR/issue numbers in long-lived artifacts —
+  link or quote exactly.** Lesson notes in the Obsidian vault
+  outlive the session that wrote them; a misattributed PR number
+  in a note is a piece of false history the next session inherits.
+  The Sept 2026 `Lessons/2026-09-07-deploy-discipline.md` was
+  originally written with "PR #3 = my deploy-discipline CI branch"
+  in five places; the actual PR #3 on the repo was a different
+  branch (cross-workspace RLS fix, `awykoff/fix-cross-workspace-
+  invite-lookup`) that I had no visibility into when writing the
+  note. The error survived into the lesson body until a later turn
+  caught it via `git ls-remote`. Prevention: when citing a PR,
+  commit, or branch in something that will outlive the current
+  turn, fetch the actual reference (`git ls-remote`, `git log
+  origin/main`, the GitHub API) and paste the URL or the verified
+  SHA, not the paraphrase. Paraphrase is fine for ephemeral chat;
+  not for vault notes, PR descriptions, or commit messages that
+  outlive the session.
+- **Don't rewrite authorship of work another session/window did.**
+  When an Issue body or PR description attributes work to a
+  different agent (a cloud-side Claude window, a prior Hermes
+  session, a human reviewer), do not silently edit the attribution
+  to match your own identity, even if the correction would look
+  "tidier." The correct response is to flag the discrepancy in
+  chat and let the user decide — rewriting authorship without
+  consent is the same shape as the credential-leak trap (silently
+  changing who a record points at). This applies in reverse too:
+  do not paste someone else's words into a commit message or note
+  without attribution. The general rule: a record that says "X
+  did Y" should keep saying "X did Y" until the original author
+  revises it.
+- **Don't commit uncommitted edits you didn't write and can't
+  attribute.** If `git status` shows an uncommitted modification
+  on a file you don't remember editing — especially with content
+  that references "today" or session-specific events — that
+  modification arrived by a path you don't control (another agent,
+  a hook, a background tool). The safe moves are: (a) `git diff`
+  the file and show the user the full change before doing
+  anything; (b) ask "did you write this?" and wait for an
+  explicit yes/no; (c) if the answer is "no" or unclear, either
+  `git restore` the file or leave the edit uncommitted until the
+  user decides. Do **not** commit unverified edits just because
+  they "look like the right thing" or because they match a
+  pattern you've seen. Same applies to staging untracked files
+  in bulk (`git add .`); stage the specific files you wrote,
+  not everything that's new.
 - **Cloud-side steps the agent can't run must ship as runbook
   commands in the PR body, not as prose instructions.** Cards
   frequently include a step the agent can't perform from the
@@ -247,6 +315,57 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   `vercel login` → `vercel link` (one-time) → `vercel --prod`,
   plus the env vars that must already be set in the Vercel
   project. The PR body is the runbook, not a description of one.
+- **Write migrations against the actual target DB, not against a
+  remembered prior state.** Sept 2026 incident: migrations
+  007/008 called `auth_workspace_id()` unqualified, which worked
+  pre-004 and silently broke after `004_private_schema_security.sql`
+  moved the function to `private.auth_workspace_id()`. Every other
+  migration in the tree had been updated to call the
+  schema-qualified form, except 007/008 — which were written in a
+  different mental session and not re-verified end-to-end before
+  shipping. The general rule: when a migration references another
+  function, table, or type, the test is *"does this file run
+  cleanly against a fresh DB that has 001..<n-1> applied?"* not
+  *"did this file run last time I touched it?"* The fix path when
+  this kind of breakage lands in prod is: apply the migrations via
+  the SQL Editor with the qualified call patched inline (fast,
+  unblocks users), then patch the on-disk migration files to
+  match (so the next `supabase db push` from a clean environment
+  doesn't repeat the error). Doing only the first half leaves the
+  next person to hit the same trap.
+- **Never echo a user-pasted credential back through any tool
+  call; treat any token that crosses a chat transcript boundary
+  as compromised.** Sept 2026: a real-shaped Supabase access token
+  (`sbp_***`) was pasted into the conversation as part of a
+  hypothetical `export SUPABASE_ACCESS_TOKEN=...` snippet. Once
+  pasted, it was in the transcript, the session DB, and any log
+  files. The correct response was *not* to `export` it (which
+  would have echoed the value into shell history and tool
+  output) and *not* to substitute a fabricated value (which would
+  have been a manufactured result). The correct path was to flag
+  the leak, refuse to use the pasted value, recommend rotation,
+  and steer toward a non-leaking auth path (`supabase login`
+  browser flow, or a secrets-store-mediated `export`). Two
+  related rules: (a) don't use `<placeholder>`-shaped values
+  even as a test pattern — a placeholder that looks real to a
+  regex is a real-looking string to anyone scanning the transcript
+  later; (b) if a tool call would echo the credential (e.g. a
+  shell `echo $TOKEN` for a sanity check), don't make that tool
+  call. The credential-leak hygiene is the same regardless of
+  whether the value is real.
+- **Prefer one consolidated reviewer over many separate specialist
+  reviewers. More agents means more coordination surface.** Sept 2026:
+  the temptation after a multi-failure incident is to add a security
+  reviewer, a deploy-discipline reviewer, a migrations reviewer,
+  etc. The right shape is *one* "Security & Release Reviewer"
+  that runs near merge time against a focused checklist (migrations
+  applied? secrets in diff? schema-qualified functions? env vars
+  set?). That fragmented setup re-creates the coordination problem
+  it was meant to solve — multiple windows with overlapping
+  state, contradictory reports from parallel runs, and unclear
+  ownership when the agents disagree. The trap generalizes: if
+  you're considering adding an agent to fix a problem caused by
+  agent coordination, add a checklist or a CI gate instead.
 
 ## Deploy checklist — load before any commit that touches production code
 
@@ -258,7 +377,14 @@ machine — no Vercel token, no Supabase CLI linked, no
 `supabase/config.toml`, no service-role key. The user runs the
 redeploy. The handoff is the contract.
 
-### Gates that already exist (added 2026-09-07 in PR #3)
+> **Bug record:** every bug fixed in a deploy should also be tracked
+> as a GitHub Issue on `awykoff/give-to-get` (canonical) with a
+> verification note on close. Cross-link the issue from this
+> branch's PR description and from the relevant Obsidian lesson
+> note. See the *GitHub Issues is the canonical bug tracker*
+> pitfall below for the full convention.
+
+### Gates that already exist (added 2026-09-07 on branch `ananda/deploy-discipline-ci`, not PR #3)
 
 - **`scripts/check-migrations-applied.sh`** — fails CI if there are
   migration files in the repo newer than what's recorded as applied
