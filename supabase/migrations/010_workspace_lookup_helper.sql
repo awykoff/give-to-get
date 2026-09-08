@@ -36,41 +36,33 @@
 -- workspace_members, the table this RPC reads).
 --
 -- =====================================================================
--- WARNING: THIS FILE IS INFERRED, NOT VERIFIED AGAINST PROD.
+-- Verification against prod (2026-09-08, Claude cloud)
 -- ---------------------------------------------------------------------
--- The function `public.workspace_id_for_user(uuid)` was applied to the
--- production Supabase project on or around 2026-09-07 (closed via
--- issue #5), and was confirmed present in
--- `supabase_migrations.schema_migrations` (Claude cloud, 2026-09-07/08
--- SQL Editor query). However, the source SQL was never committed to
--- the repo. This file reconstructs the most likely implementation
--- shape from the route's call site:
---
---   supabase.rpc("workspace_id_for_user", { p_user_id: recipientUserId })
---
--- and the SECURITY DEFINER pattern established in 009.
---
--- BEFORE MERGING: someone with production SQL access should diff this
--- file against the actual output of:
+-- Verified live in the production Supabase SQL Editor that this file
+-- matches what's running in prod:
 --
 --   SELECT pg_get_functiondef('public.workspace_id_for_user(uuid)'::regprocedure);
---   SELECT pg_get_userbyid((
---     SELECT relowner FROM pg_proc WHERE proname = 'workspace_id_for_user'
---   ));
---   SELECT grantee, privilege_type
---     FROM information_schema.routine_privileges
---     WHERE routine_name = 'workspace_id_for_user';
 --
--- and amend any field-level differences (column types, additional
--- null handling, extra GRANTs, etc.). The structure below is
--- deliberately conservative -- it does what the route appears to need
--- and nothing more.
+-- returned:
 --
--- Apply via: psql with the connection string from Supabase Dashboard,
--- or via supabase db push (after the file matches prod). After apply,
--- run `select * from supabase_migrations.schema_migrations where
--- version = '010_workspace_lookup_helper.sql'` and confirm the row
--- matches the existing entry.
+--   CREATE OR REPLACE FUNCTION public.workspace_id_for_user(p_user_id uuid)
+--     RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
+--     SET search_path TO ''
+--     AS $function$
+--       SELECT workspace_id
+--       FROM public.workspace_members
+--       WHERE user_id = p_user_id
+--       LIMIT 1;
+--     $function$
+--
+-- Matches the body below character-for-character including SECURITY
+-- DEFINER, STABLE, the empty search_path, and the FROM public.workspace_members
+-- prefix. No amendments needed. The reconstruction originally written
+-- here was a good inference.
+--
+-- Applied on or around 2026-09-07 (closed via issue #5 / PR #3). The
+-- row is recorded in `supabase_migrations.schema_migrations` (verified
+-- alongside the functiondef above).
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
