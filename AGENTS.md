@@ -133,6 +133,13 @@ Skill directory (see each `SKILL.md` for full detail):
 | `givetoget-tester` | Unit, RLS, and Playwright E2E coverage |
 | `givetoget-docs` | Keeping README/AGENTS.md/schema notes in sync |
 
+- **Obsidian knowledge vault setup** lives at `docs/obsidian-vault/README.md`
+  (product specs, ADRs, agent memory conventions — bootstrap a personal
+  vault from there). The reasoning for why this is in the repo rather than
+  a personal tool is in `docs/adr/0001-documentation-architecture.md`.
+  Convention: contributor-facing docs live in `docs/`; per-contributor
+  working vaults stay local and never get committed to this repo.
+
 ## Build phase sequence
 
 ```
