@@ -1,7 +1,7 @@
 ---
 name: givetoget-docs
 description: Keeps give-to-get.com's README, AGENTS.md, and schema notes in sync with the actual codebase
-version: 1.0.0
+version: 1.1.0
 metadata:
   hermes:
     tags: [documentation, givetoget]
@@ -73,6 +73,25 @@ lands that isn't yet reflected in the project docs.
   hand back, not retry. The companion lesson in
   `givetoget-lead-developer` covers the broader "don't retry
   blocked user-gated operations" rule.
+- **Project docs that depend on personal tools are a dual-home
+  split, not a single source of truth.** Conventions, note
+  templates, and YAML schemas for project docs (product specs,
+  ADRs, agent memory) can correctly live in two places at once:
+  the project repo (`docs/obsidian-vault/`), so they ship with
+  `git clone` and a new contributor can bootstrap their own
+  personal Obsidian vault from them; and the contributor's
+  personal Obsidian vault, so they can use the templates and
+  schemas during their actual day-to-day work. The repo is the
+  shared, version-controlled source; the personal vault is the
+  daily-use surface. Don't try to keep one synchronized copy of
+  the whole thing — pick the repo as canonical for shared assets
+  (templates, conventions, starter folders) and the vault as
+  canonical for the contributor's own working notes. When a
+  convention changes, update the repo first, then update your
+  local vault by re-copying from the repo. See
+  `docs/adr/0001-documentation-architecture.md` for the rationale
+  this project settled on (and the rejection of the "one shared
+  synced vault for the whole team" alternative).
 
 ## Verification
 
