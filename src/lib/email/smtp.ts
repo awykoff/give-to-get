@@ -33,7 +33,7 @@
 //     here, the right place is a background queue, not in the
 //     request path.
 
-import nodemailer from "nodemailer";
+import { createTransport, type Transporter } from "nodemailer";
 
 const FROM_ADDRESS = "notifications@infinitekb.com";
 const FROM_NAME = "give-to-get";
@@ -107,9 +107,9 @@ export async function sendInviteEmail(args: SendInviteEmailArgs): Promise<void> 
   // avoids connection-pool state leaking across sends, and the
   // connection setup cost (a single TLS handshake) is negligible
   // compared to the rest of the route's work.
-  let transporter: nodemailer.Transporter;
+  let transporter: Transporter;
   try {
-    transporter = nodemailer.createTransport({
+    transporter = createTransport({
       host: config.host,
       port: config.port,
       secure: config.secure,
