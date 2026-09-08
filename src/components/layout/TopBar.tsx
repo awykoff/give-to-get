@@ -1,6 +1,19 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import Link from "next/link";
+
+interface HeaderUser {
+  firstName: string | null;
+  lastName: string | null;
+  initials: string;
+  avatarUrl: string | null;
+}
+
+interface TopBarProps {
+  credits: number;
+  user: HeaderUser;
+}
 
 const PAGE_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -11,14 +24,15 @@ const PAGE_TITLES: Record<string, string> = {
   "/network": "My Network",
 };
 
-interface TopBarProps {
-  credits: number;
-}
-
-export default function TopBar({ credits }: TopBarProps) {
+export default function TopBar({ credits, user }: TopBarProps) {
   const pathname = usePathname();
   const title = PAGE_TITLES[pathname] ?? "give-to-get.com";
   const showExport = pathname === "/contacts";
+
+  // "Hi, {firstName}" when we have a name; neutral fallback when we
+  // don't (existing users whose Settings form hasn't been filled out
+  // yet — see supabase/migrations/007_user_profiles.sql).
+  const greeting = user.firstName ? `Hi, ${user.firstName}` : "Hi there";
 
   return (
     <header style={{
@@ -40,6 +54,66 @@ export default function TopBar({ credits }: TopBarProps) {
 
       {/* Right side */}
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        {/* Profile element — circular avatar or initials, plus greeting.
+            Linked to /settings (the natural home for the future photo
+            upload control). Positioned LEFT of the credits pill per
+            design. Phase 2 work (Supabase Storage + upload UI in
+            Settings) is additive: the only branch in this component
+            is "is avatarUrl set" vs "render initials." */}
+        <Link
+          href="/settings"
+          aria-label="Open settings"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "3px 10px 3px 4px",
+            borderRadius: "100px",
+            border: "1px solid rgba(255,255,255,0.07)",
+            textDecoration: "none",
+            color: "#F0EEFF",
+          }}
+        >
+          {user.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={user.avatarUrl}
+              alt=""
+              width={28}
+              height={28}
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: "50%",
+                objectFit: "cover",
+                display: "block",
+              }}
+            />
+          ) : (
+            <span
+              aria-hidden="true"
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: "50%",
+                background: "rgba(139,92,246,0.12)",
+                color: "#8B5CF6",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "11px",
+                fontWeight: 600,
+                letterSpacing: "0.02em",
+              }}
+            >
+              {user.initials}
+            </span>
+          )}
+          <span style={{ fontSize: "12px", fontWeight: 500, color: "#8B87A8" }}>
+            {greeting}
+          </span>
+        </Link>
+
         {/* Credits pill */}
         <div style={{
           display: "flex",
