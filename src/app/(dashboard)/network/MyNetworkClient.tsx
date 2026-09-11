@@ -375,7 +375,7 @@ function ConnectionsSection({
             color: "#4E4A66",
           }}
         >
-          Your connections
+          Your Contacts
         </h3>
         <span style={{ fontSize: "12px", color: "#4E4A66" }}>
           No accepted connections yet.
@@ -406,7 +406,7 @@ function ConnectionsSection({
           color: "#4E4A66",
         }}
       >
-        Your connections
+        Your Contacts
       </h3>
 
       {revokeError && (
