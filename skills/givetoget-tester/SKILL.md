@@ -40,6 +40,19 @@ coverage rather than only manually clicking through.
   contacts — this is the single most common off-by-N bug in this codebase.
 - Writing RLS tests as the service-role client, which bypasses RLS entirely
   and gives a false pass.
+- **Boundary with the Moggallana QA role (`givetoget-qa-moggallana`,
+  when created).** `givetoget-tester` runs Playwright against **localhost
+  dev** as a pre-commit gate — the same `e2e/` directory, the same
+  flows (signup → import → browse → export), but aimed at the developer's
+  local server with whatever test data the developer has seeded. The
+  Moggallana role runs Playwright against a **deployed URL** (Vercel
+  preview for a PR, or production for a release-verification pass) and
+  asserts real-world side effects beyond the page itself: real IMAP
+  mailbox delivery, real Supabase row state, mandatory cleanup of any
+  state the test created. If a test needs IMAP polling or a deployed
+  URL, it does NOT belong in `givetoget-tester` — defer it to the
+  Moggallana skill or a future `givetoget-qa-moggallana` placeholder
+  in this same `givetoget-*` family.
 
 ## Verification
 
