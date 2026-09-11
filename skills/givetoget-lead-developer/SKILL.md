@@ -1,7 +1,7 @@
 ---
 name: givetoget-lead-developer
 description: Tech-lead orchestration for give-to-get.com — sequences phases, decides when to delegate to a specialist skill/subagent
-version: 1.0.0
+version: 1.1.0
 metadata:
   hermes:
     tags: [orchestration, planning, givetoget]
@@ -217,6 +217,37 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   work is still correct now." The shipped report must show *this
   session's* exit codes and route table — never paraphrase a
   prior session's claim.
+- **`--no-verify` is sometimes the right move, but the prescribed
+  re-verification step is what makes it safe.** When the pre-commit
+  hook's `tsc --noEmit` (or any other check the hook runs) fails for
+  reasons unrelated to the code being committed — local `node_modules`
+  corrupted by repeated `npm install --ignore-scripts` calls, a missing
+  `@types/*` directory the lockfile says should be there, a husky
+  postinstall script that's not on PATH — the right move is:
+  commit with `--no-verify`, document the bypass rationale *in the
+  commit message body* (which other agents and reviewers will see
+  inline), then immediately recover the local env (e.g. `rm -rf
+  node_modules && npm ci`, or whatever the corruption root cause
+  requires), then re-run `tsc --noEmit` + `npm run build` + Playwright
+  *manually* against the now-clean env. The verification step is
+  what makes the bypass safe, not the bypass itself. Sept 2026
+  network-invite-email SMTP follow-up: the original commit landed
+  with `--no-verify` because the env was broken; the re-verify pass
+  on a clean install caught a real type error
+  (`Cannot find namespace 'nodemailer'` — `nodemailer.Transporter`
+  doesn't exist as a namespace member under default-import with
+  `@types/nodemailer@8`) that the hook would have caught but didn't
+  because it was bypassed. Fix landed in a follow-up commit on the
+  same branch with the hook passing clean. Without the prescribed
+  re-verify, the bug would have shipped to Vercel's preview deploy
+  with a slower feedback loop. Generalize: `--no-verify` is a
+  workflow correction, not a waiver of verification — and it must
+  always be paired with explicit re-verification before the branch
+  is marked ready-for-review. Don't reach for it reflexively; reach
+  for it only when the hook's failure is demonstrably unrelated to
+  the code being committed (have `git diff` of the staged changes
+  in front of you to prove that to yourself), and document the
+  evidence inline.
 - **Stale `.git/index.lock`.** If a prior terminal command exits
   abnormally mid-git-operation (harness block, ctrl-C, OOM,
   anything other than a clean exit), the lock file is left behind
@@ -353,6 +384,49 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   shell `echo $TOKEN` for a sanity check), don't make that tool
   call. The credential-leak hygiene is the same regardless of
   whether the value is real.
+- **Per-repo givetoget-* skills live in TWO locations, kept in sync.** The
+  repo-local copy at `~/Developer/Projects/give-to-get/skills/<skill>/SKILL.md`
+  travels with the code (committed, version-controlled, visible to
+  reviewers in PR diffs). The per-profile mirror at
+  `~/.hermes/profiles/ananda/skills/givetoget/<skill>/SKILL.md` is what
+  Hermes actually loads at session start. When creating a new
+  per-repo skill (`givetoget-<role>`), write BOTH copies on day one —
+  don't assume one will be auto-generated. When patching an existing
+  one, patch both and verify the diffs are identical (`diff -q
+  ~/.hermes/profiles/ananda/skills/givetoget/<skill>/SKILL.md
+  ~/Developer/Projects/give-to-get/skills/<skill>/SKILL.md`). Drift
+  between the two is a silent-load-path bug — the next session loads
+  one, you write the other, and the patch appears to "not stick."
+  Reference files (`references/<topic>.md`) follow the same dual-rule
+  and live alongside each SKILL.md. `linked_files` returned by
+  `skill_view` will show the per-profile mirror path — that's the
+  canonical location for loading, but the repo copy is the canonical
+  location for committing and reviewing. The lead-developer skill
+  itself is a `givetoget-*` skill and follows this convention; if
+  you find yourself patching it via `skill_manage`, the patch goes
+  to both copies or the next session won't see it.
+- **Claude.AI message files at `~/.hermes/messages/*-claude-to-ananda-*.md`
+  are LLM-generated drafts from Claude.AI (cloud), relayed by Aaron via
+  copy-paste — not peer correspondence.** Claude.AI has no live
+  visibility into this machine, this session, or the repo beyond what
+  Aaron pastes into its window. Treat each substantive claim as
+  unverified until you check it yourself (`curl
+  https://api.github.com/...`, `git ls-remote`, a direct filesystem
+  read). Specifically: when Claude's drafts say "Aaron answered X" or
+  "from Aaron plus me," that's Claude modeling the answer, not
+  reporting it — ask Aaron. The dual-source framing ("Aaron relaying
+  my words back through chat") is one source through two channels, not
+  independent confirmation. Don't change authorship, commit hashes,
+  or scope decisions based on a Claude-message draft without verifying
+  the underlying claim against the repo.
+- **Re-check filesystem state across turns before reporting a file
+  doesn't exist.** A user asking "read X" twice in a row, with
+  intervening work between, can mean a file that didn't exist at the
+  first `ls` does exist at the second. Don't lock in "file not found"
+  from a stale state — re-stat (or `ls -la`) at the moment of the
+  action, especially across turns where the user may have just created
+  the file in another terminal.
+
 - **Prefer one consolidated reviewer over many separate specialist
   reviewers. More agents means more coordination surface.** Sept 2026:
   the temptation after a multi-failure incident is to add a security
