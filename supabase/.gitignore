@@ -1,0 +1,16 @@
+# Supabase CLI runtime caches — never committed.
+# These files are written by `supabase start` / `supabase link` and
+# contain either service versions (no secrets) or project linkage
+# metadata (project_ref points at whichever Supabase Cloud project
+# was last linked -- could be production).
+#
+# The local stack reads config.toml only; .temp/ is incidental.
+#
+# IMPORTANT: If you've ever run `supabase link --project-ref <id>` on
+# this machine, the linked-project.json file in .temp/ will contain
+# a project_ref. That file is local-only and does NOT cause the
+# local stack to touch production, but committing it would expose
+# which Supabase orgs/projects you work with. Treat .temp/ as
+# local-only state.
+
+.temp/
