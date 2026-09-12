@@ -1,0 +1,77 @@
+# Supabase CLI local stack configuration — give-to-get.com
+#
+# Minimum config for the Phase 1 on-demand tester pool. Phase 1 needs:
+#   - Postgres (apply migrations + run verify probes)
+#   - PostgREST (run .not(in, subquery) and other URL-syntax tests)
+#   - GoTrue (issue test JWTs for the auth'd tester roles)
+#
+# Phase 1 does NOT need:
+#   - Studio (no UI testing in Phase 1)
+#   - Inbucket (no email testing in Phase 1)
+#   - Storage (no file upload testing in Phase 1)
+#
+# These can be added later only if a specific tester requires them. Keep
+# the local stack lean.
+#
+# This config intentionally does NOT link to any Supabase Cloud project.
+# The .temp/linked-project.json currently points at the production
+# project (jlabznucltdmtydhfbbt) -- that's a runtime cache from a
+# previous `supabase link` and does NOT cause the local stack to
+# touch production. The local stack is fully self-contained regardless
+# of that file's contents.
+#
+# Reference: `supabase start` reads this file. Schema:
+# https://supabase.com/docs/guides/cli/local-development#configuring-your-project
+# (the docs are the source of truth for the full schema; the values
+# below are the minimum Phase 1 needs).
+
+project_id = "give-to-get"
+
+[api]
+# The port PostgREST listens on locally. Distinct from production to
+# avoid any local-process-vs-prod confusion. Default is 54321; we
+# keep the default so the .env.local NEXT_PUBLIC_SUPABASE_URL works
+# for both preview and local (the URL contains the port).
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+# Postgres port and credentials. These are LOCAL-ONLY credentials
+# (supabase start creates an isolated Postgres in Docker). No real
+# production credentials are involved.
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.pooler]
+enabled = false
+# Disabled because Phase 1 doesn't need the Supavisor pooler. The
+# direct Postgres connection on :54322 is sufficient for the
+# verify script's probes.
+
+[realtime]
+enabled = false
+# Disabled -- no realtime subscriptions in Phase 1 tests.
+
+[studio]
+enabled = false
+# Disabled -- Phase 1 doesn't need Studio. The verify script runs
+# SQL via psql or the supabase CLI's `db execute` directly.
+
+# [inbucket] omitted entirely (would be disabled by default)
+# [storage] omitted entirely (would be disabled by default)
+# [auth] omitted entirely -- defaults are correct for Phase 1.
+#       Auth will start with the default port (54324) and a
+#       localhost-only GoTrue instance. Phase 1 testers issue
+#       JWTs via supabase.auth.* against this local GoTrue.
+
+[analytics]
+enabled = false
+# Disabled -- no analytics shipping from the local stack.
+
+[experimental]
+# Webhooks, storage-bucket-backups, etc. are off by default and
+# omitted. Phase 1 doesn't need them.
