@@ -35,7 +35,7 @@ async function getDashboardStats(supabase: Awaited<ReturnType<typeof getWorkspac
 async function getRecentImports(supabase: Awaited<ReturnType<typeof getWorkspaceContext>>["supabase"], workspaceId: string) {
   const { data } = await supabase
     .from("imports")
-    .select("id, created_at, file_name, total_rows, new_contacts_count, duplicate_count, invalid_count, status")
+    .select("id, created_at, filename, original_row_count, new_contacts_count, duplicate_count, invalid_count, status")
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: false })
     .limit(5);
@@ -185,9 +185,9 @@ export default async function DashboardPage() {
               {recentImports.map((imp) => (
                 <tr key={imp.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
                   <td style={{ padding: "11px 20px", fontSize: "13px", color: "#F0EEFF", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {imp.file_name ?? "—"}
+                    {imp.filename ?? "—"}
                   </td>
-                  <td style={{ padding: "11px 20px", fontSize: "13px", color: "#8B87A8" }}>{imp.total_rows ?? 0}</td>
+                  <td style={{ padding: "11px 20px", fontSize: "13px", color: "#8B87A8" }}>{imp.original_row_count ?? 0}</td>
                   <td style={{ padding: "11px 20px" }}>
                     <span style={{ fontSize: "11px", fontWeight: 600, background: "rgba(52,211,153,0.15)", color: "#6EE7B7", borderRadius: "5px", padding: "2px 7px" }}>
                       +{imp.new_contacts_count ?? 0}

@@ -27,7 +27,7 @@ interface Contact {
   city: string | null;
   state: string | null;
   country: string | null;
-  company_size: string | null;
+  num_employees: number | null;
 }
 
 interface Props {
@@ -50,7 +50,7 @@ export default function ContactsTable({ filters, onSelectionChange }: Props) {
     let query = supabase
       .from("contacts")
       .select(
-        "id, first_name, last_name, title, company_name, vertical, seniority, city, state, country, company_size",
+        "id, first_name, last_name, title, company_name, vertical, seniority, city, state, country, num_employees",
         { count: "exact" }
       )
       .range(pageNum * PAGE_SIZE, (pageNum + 1) * PAGE_SIZE - 1)
@@ -90,9 +90,18 @@ export default function ContactsTable({ filters, onSelectionChange }: Props) {
     if (filters.seniorities.length > 0) {
       query = query.in("seniority", filters.seniorities);
     }
-    if (filters.companySize) {
-      query = query.eq("company_size", filters.companySize);
-    }
+    // Company-size filter: disabled in this fix. The schema column
+    // `num_employees` is INTEGER (single value), but FilterPanel
+    // sends range labels ("1-10", "51-200", "5000+", etc.) as the
+    // filter value. A range-label-to-integer comparison would never
+    // match. Fixing this properly requires translating the label
+    // into a `num_employees BETWEEN <lo> AND <hi>` clause at the
+    // query layer (or bucketing in the UI). Tracked as follow-up;
+    // see ~/.hermes/messages/2026-09-11-contacts-schema-drift-fix-proposal.md
+    // section "Filter UI side".
+    // if (filters.companySize) {
+    //   // query = query.between("num_employees", lower, upper);
+    // }
     if (filters.location) {
       query = query.or(
         `city.ilike.%${filters.location}%,state.ilike.%${filters.location}%,country.ilike.%${filters.location}%`
@@ -100,7 +109,7 @@ export default function ContactsTable({ filters, onSelectionChange }: Props) {
     }
 
     const { data, count } = await query;
-    setContacts(data ?? []);
+    setContacts((data ?? []) as Contact[]);
     setTotal(count ?? 0);
     setLoading(false);
     setSelected(new Set());
@@ -276,7 +285,7 @@ export default function ContactsTable({ filters, onSelectionChange }: Props) {
                         {location(c)}
                       </td>
                       <td style={{ padding: "10px 12px", fontSize: "12px", color: "#8B87A8", whiteSpace: "nowrap" }}>
-                        {c.company_size ?? "—"}
+                        {c.num_employees ?? "—"}
                       </td>
                       {/* Email — always gated */}
                       <td style={{ padding: "10px 12px" }}>
