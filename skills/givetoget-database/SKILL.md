@@ -1,7 +1,7 @@
 ---
 name: givetoget-database
 description: Postgres migrations, RLS policies, and triggers for give-to-get.com's Supabase schema
-version: 1.1.0
+version: 1.3.0
 metadata:
   hermes:
     tags: [supabase, postgres, rls, givetoget]
@@ -162,14 +162,39 @@ See `references/auth-schema-lookups.md` for the full rationale.
   permit one row and the application must filter the other out
   explicitly. Concrete shape (seen Sept 2026): the new
   `contacts_network_select` policy made connection-gated contacts
-  visible to the viewer's anon-keyed query — the only fix is for
-  the Contacts page's own query to add
-  `.not("contributed_by_workspace_id", "in", "(SELECT workspace_id FROM v_my_network_workspace_ids)")`.
+  visible to the viewer's anon-keyed query. The Contacts page's own
+  query must explicitly exclude connection-gated contacts.
   When writing a new RLS policy that broadens visibility, always
   audit every existing query path that reads the same table and
   decide whether each needs a defensive filter. This is application-
   query-scoping responsibility, not a database concern that can be
   resolved by RLS alone.
+- **`.not(in, "(SELECT ...)")` is silently broken on PostgREST.**
+  The natural defensive filter against the broadened RLS policy is
+  `.not("col", "in", "(SELECT ...)")`. This LOOKS like a subquery
+  to a developer reading the code. It is not. PostgREST URL-encodes
+  the embedded SELECT as a literal string and sends it to Postgres,
+  which then tries to compare a UUID column against the literal text
+  `"SELECT workspace_id FROM ..."` and raises
+  `invalid input syntax for type uuid: "SELECT workspace_id FROM ..."`
+  (observed on give-to-get.com production 2026-09-11). The query
+  returns 0 rows silently; the `?? []` empty-state fallback hides
+  the error as "0 contacts".
+
+  **The fix is a SECURITY DEFINER RPC**, not a different embedded
+  SELECT shape. PostgREST inlines RPCs in filter expressions
+  server-side, so `.not("col", "in", "public.network_workspace_ids()")`
+  evaluates against real UUID values, the client never sees the
+  workspace IDs, and the privacy boundary the embedded-SELECT was
+  designed to provide is preserved. The canonical example is
+  `public.network_workspace_ids()` in migration
+  `012_network_workspace_ids_rpc.sql` — same pattern as
+  `public.user_id_for_email` (009) and `public.workspace_id_for_user`
+  (010). The original `v_my_network_workspace_ids` view stays in
+  place because RLS policy subqueries are evaluated directly by
+  Postgres (not URL-encoded through PostgREST), so the view works
+  fine for that path; the function exists specifically for the
+  client-side filter use case.
 - Forgetting RLS on a junction table (`export_contacts`,
   `workspace_contact_access`) because "it's just a join table" — these leak
   contact access just as easily as the primary tables.
@@ -195,6 +220,96 @@ See `references/auth-schema-lookups.md` for the full rationale.
 - **Auth-schema lookups from a route handler.** Don't reach for the
   service-role key just because the anon client can't see `auth.users`.
   Use the `public.user_id_for_email` RPC (009) — see Patterns above.
+
+## Pitfalls (continued)
+
+- **For NOT NULL constraints where the design intent matters, ship
+  two layers: `ALTER COLUMN ... SET NOT NULL` plus a named CHECK
+  constraint.** The CHECK is technically redundant (Postgres enforces
+  NOT NULL via the implicit column attribute) but documents intent
+  in `information_schema.table_constraints` and `psql`'s `\d` output,
+  and survives any future migration that drops the NOT NULL (for a
+  soft-delete feature, a tombstone row, etc.). The named constraint
+  surfaces a more grep-able error on violation. Concrete example
+  (2026-09-11, `contacts.contributed_by_workspace_id`):
+
+  ```sql
+  ALTER TABLE public.contacts
+    ALTER COLUMN contributed_by_workspace_id SET NOT NULL;
+
+  ALTER TABLE public.contacts
+    ADD CONSTRAINT contacts_contributor_not_null
+    CHECK (contributed_by_workspace_id IS NOT NULL);
+
+  COMMENT ON CONSTRAINT contacts_contributor_not_null ON public.contacts IS
+    'Documents the design decision that every contact row must have
+     a real contributing workspace. The NOT NULL on the column is
+     primary enforcement; this CHECK is belt-and-suspenders and
+     surfaces intent in information_schema.table_constraints.';
+  ```
+
+  Use this shape whenever the constraint encodes a design decision
+  that future contributors need to discover from the schema alone
+  (no surrounding PRD, no comment in the migration body to explain
+  why). The cost is one redundant error path for actual violations —
+  acceptable.
+
+- **Schema-shape baselines must capture content, not just names.**
+  A test/verify tool that snapshots "tables exist with these names"
+  / "functions exist with these names" / "policies exist with these
+  names" misses every bug that's a behavior change inside the same
+  name. Three real examples from 2026-09-11: (a) the historic
+  007/008 bug — `auth_workspace_id()` vs `private.auth_workspace_id()`
+  differs only in function body, not function name; a name-only
+  snapshot considered both states valid. (b) the NULL-attribution
+  filter trap — `WHERE col NOT IN (subquery)` vs `WHERE NOT EXISTS
+  (... WHERE col = ...)` is identical at the function-name level
+  and different at the SQL-semantics level. (c) the schema-drift
+  bug (`contacts.company_size` vs `num_employees`) — names ARE
+  different, so name-only catches it, but the column TYPES were
+  not in the baseline; a regression that silently changes INTEGER
+  → TEXT would pass.
+
+  The fix: baseline format must include (1) `pg_get_functiondef`
+  output for each SECURITY DEFINER function (captures body), (2)
+  USING/WITH CHECK clauses for each RLS policy (captures policy
+  expression), (3) trigger definitions including timing and table
+  binding (captures binding — note that `pg_get_functiondef`
+  does NOT see trigger bindings, so triggers are a separate
+  array from function_bodies), (4) `information_schema.columns`
+  type info alongside the table list (catches silent type
+  changes). Same applies to views, materialized views, generated
+  columns, and any other object whose behavior depends on its
+  definition rather than its name. Drift is detected by
+  string-exact comparison; a benign reformat (whitespace, comment
+  rephrasing) trips the diff. If that becomes painful, normalize
+  whitespace before comparison in the verify script. The full
+  baseline shape is in
+  `~/.hermes/messages/2026-09-11-on-demand-tester-pool-phase-1-proposal.md`
+  § "What 'migrations apply cleanly' means" (durable shape will
+  live in `docs/testing/` once Phase 1 implementation lands).
+
+- **Snapshot/regenerate commands must refuse a dirty working tree
+  unless explicitly overridden.** When a tool's purpose is to
+  capture "the current state" of something (a baseline JSON, a
+  fixture dump, a generated types file, a schema snapshot), running
+  it in a dirty tree produces an output that mixes the just-captured
+  committed state with the user's uncommitted edits — silently.
+  The user doesn't know the snapshot includes their scratch work;
+  the next reader of the snapshot trusts it as the canonical
+  baseline. The right pattern is the same as the canonical git
+  workflow: the tool runs `git status --porcelain` first, exits
+  non-zero if anything is uncommitted, prints "refusing to update:
+  working tree contains N uncommitted change(s); commit, stash,
+  or pass --allow-dirty to override." The override flag is allowed
+  but logs a prominent warning before writing. The escape hatch is
+  for the legitimate case (initial baseline capture, CI environment)
+  — not for the everyday workflow, where uncommitted edits should
+  land in a commit first. Same logic applies to any capture /
+  regenerate command (generated types, OpenAPI specs, schema
+  snapshots, fixture regenerators, type generators driven from
+  the database) — capture-from-dirty-tree is a specific failure
+  mode worth a check, not "the user will be careful."
 
 ## Verification
 
