@@ -1,7 +1,7 @@
 ---
 name: givetoget-lead-developer
 description: Tech-lead orchestration for give-to-get.com — sequences phases, decides when to delegate to a specialist skill/subagent
-version: 1.1.0
+version: 1.2.0
 metadata:
   hermes:
     tags: [orchestration, planning, givetoget]
@@ -384,6 +384,116 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   shell `echo $TOKEN` for a sanity check), don't make that tool
   call. The credential-leak hygiene is the same regardless of
   whether the value is real.
+- **Credential-leak boundary is irreversible; don't consume the
+  leaked credential even for "legitimate" work.** A token that
+  crossed a transcript boundary is in scope for rotation regardless
+  of what the user subsequently asks you to do with it. Active use
+  of a leaked credential (passing it to `curl`, `delegate_task`,
+  or any tool call) compounds the leak: the token now flows into
+  tool outputs, log files, and any sub-session context the user
+  spawns. The right response to "here's a real JWT, use it for
+  the auth'd curl" after a leak is: (a) acknowledge the token is
+  treated as compromised by the earlier rule, (b) recommend the
+  user rotate and produce a fresh token post-rotation, (c) propose
+  non-leaking diagnostic paths that don't require the user-scoped
+  credential (anon-key curl tests URL syntax without seeing
+  user-scoped rows; service-role SQL tests data shape without
+  needing a user credential; Supabase SQL Editor via the user
+  tests auth-scoped behavior). Never consume the leaked token
+  "just this once" — the boundary crossed on the way in cannot
+  be undone by the work you do with it.
+- **Git history-modifying actions require explicit consent before
+  execution.** Aaron's standing rule: amend, fixup, rebase,
+  force-push, and any other rewrite of existing commits all
+  require an explicit "go ahead" from the user. This applies to
+  every branch in this project, not just `main`. The default
+  response when a history-modifying action is the natural next
+  step is to STOP and ask, even if the action is small and even
+  if there's a reasonable default. Three concrete examples from
+  this project where this rule bit: (a) when a feature commit
+  ended up stacked on top of an unrelated debug commit, the
+  right move was to ask (rebase / cherry-pick / push-as-is) rather
+  than rebase without confirmation; (b) when a commit subject
+  had cosmetic backtick-stripping, the right move was to flag
+  the cosmetic defect for amend consent rather than amend
+  unprompted; (c) when a merge would resolve a complex branch
+  shape, the right move was to ask about merge-vs-rebase-vs-squash
+  rather than pick one. The default branch pointer movement
+  (`git checkout -b`, `git pull --ff-only`) is fine; everything
+  that rewrites existing commit history is gated.
+- **Ask-don't-guess on multi-step decisions.** When a decision
+  has multiple defensible options AND the user has signaled they
+  want input on this class of decision, the right move is to ask,
+  not to pick the most-likely-correct option and proceed. Concrete
+  triggers: (a) the user has explicitly said "I'd rather answer
+  than have you build against an assumption"; (b) the decision
+  affects user-visible behavior in a non-reversible way; (c)
+  the decision's outcome depends on preferences not stated in
+  the repo; (d) the user is on the hook for the consequences of
+  the choice. Counter-example (don't ask): single-best-option
+  technical decisions where the right answer is clearly
+  recoverable from the code or the project's documented
+  conventions. The shape of the ask matters too: a `clarify`
+  call with 2-3 options and a recommended one pre-selected is
+  cheaper than blocking on a free-text reply. Per
+  `givetoget-lead-developer/AGENTS.md` and the standing user-
+  profile note: timeouts on the clarify call mean the user is
+  not present — don't treat silence as consent; surface the
+  blocking decision in chat instead.
+- **Read-only inventory/version checks never need a round-trip through
+  the user.** Aaron's standing preference (set 2026-09-11, reinforced
+  during the Phase 1 scope-doc arc): `which <binary>`, `--version`,
+  `ls`, `cat <config>`, `git status`, `git log`, `git ls-remote`,
+  `git diff`, any read-only probe — go ahead and run them without
+  asking first. The "ask before writing" gate exists for side effects
+  (commits, pushes, migrations, deploys, anything that touches
+  production state). Read-only checks are the inverse: they're cheap,
+  they don't change state, and asking "should I look?" wastes a turn
+  on a question with only one answer. The exception is when the read
+  itself produces a side effect (a tool that writes a log file, a
+  script that touches a sidecar, a curl that triggers a stateful
+  server-side action) — when in doubt, check the tool's docs. The
+  shape: "I'll run a quick read to check X" should NOT be a chat
+  message asking permission; it should be a tool call followed by
+  a report of what was found. This is the inverse of the
+  "Ask-don't-guess on multi-step decisions" pitfall — that one
+  covers when to ask; this one covers when not to.
+- **Verify user-flagged fixes actually made it into the document
+  before building on the document.** When the user says "the
+  X I flagged a couple messages back — confirm it's in Y before
+  you start building," that's a request to re-verify the current
+  state of the document, not to take their word that the flag
+  was acknowledged. The right move is to grep the document for
+  the relevant marker (function names, array names, whatever the
+  user named) and either confirm presence or fix the gap before
+  continuing. Concretely: the 2026-09-11 Phase 1 scope doc went
+  through three revisions before the content-capture blocks
+  landed; Aaron asked explicitly because he wanted to verify the
+  third revision actually had the change. If I'd just said "yes,
+  that's in there" without checking, I'd have built scripts
+  around an incomplete spec. The meta-rule: when the user asks
+  "did X land in Y?", the answer is "let me check" not "yes" —
+  unless you've just read the relevant section in the current
+  turn. Same applies to user-flagged gaps in the codebase
+  ("is feature X actually implemented?" — `git grep` or read the
+  file before answering, don't answer from memory of an earlier
+  session).
+- **Start simple; defer architectural complexity until the simpler
+  version proves its cost.** The on-demand tester pool
+  (`~/.hermes/messages/2026-09-11-on-demand-tester-pool-phase-1-proposal.md`)
+  is the canonical example: Phase 1 is the local Supabase stack
+  + a verify script; sub-session pooling of testers, parallel
+  stack spin-up, and other scale-up concerns were deferred until
+  Phase 1-2 proved stable on Aaron's machine. The pattern generalizes:
+  when proposing architecture with a "simple version" and a "more
+  elaborate version" path, ship the simple version first. The
+  elaborate version's cost is real even if it's the "right"
+  design; the simple version's cost is bounded; and the simple
+  version's actual behavior informs what the elaborate version
+  needs to optimize for. Don't bundle the complexity into the
+  initial implementation because "we'll need it eventually."
+  We'll need it eventually when the simple version has proven
+  its ceiling.
 - **Per-repo givetoget-* skills live in TWO locations, kept in sync.** The
   repo-local copy at `~/Developer/Projects/give-to-get/skills/<skill>/SKILL.md`
   travels with the code (committed, version-controlled, visible to
@@ -421,11 +531,70 @@ Definition of done: [how to verify — build passes, matches Dashboard.jsx, etc.
   the underlying claim against the repo.
 - **Re-check filesystem state across turns before reporting a file
   doesn't exist.** A user asking "read X" twice in a row, with
-  intervening work between, can mean a file that didn't exist at the
-  first `ls` does exist at the second. Don't lock in "file not found"
+  intervening work between, can mean a file that didn't exist at
+  the first `ls` does exist at the second. Don't lock in "file not found"
   from a stale state — re-stat (or `ls -la`) at the moment of the
   action, especially across turns where the user may have just created
   the file in another terminal.
+- **Read-only inventory/version checks never need a round-trip through
+  the user.** Aaron's standing preference (set 2026-09-11, reinforced
+  during the Phase 1 scope-doc arc): `which <binary>`, `--version`,
+  `ls`, `cat <config>`, `git status`, `git log`, `git ls-remote`,
+  `git diff`, any read-only probe — go ahead and run them without
+  asking first. The "ask before writing" gate exists for side effects
+  (commits, pushes, migrations, deploys, anything that touches
+  production state). Read-only checks are the inverse: they're cheap,
+  they don't change state, and asking "should I look?" wastes a turn
+  on a question with only one answer. The exception is when the read
+  itself produces a side effect (a tool that writes a log file, a
+  script that touches a sidecar, a curl that triggers a stateful
+  server-side action) — when in doubt, check the tool's docs. The
+  shape: "I'll run a quick read to check X" should NOT be a chat
+  message asking permission; it should be a tool call followed by
+  a report of what was found. This is the inverse of the
+  "Ask-don't-guess on multi-step decisions" pitfall — that one
+  covers when to ask; this one covers when not to.
+- **A local ephemeral Supabase stack is the verification layer for
+  this project, not optional.** The 2026-09-11 arc surfaced three
+  silent-on-deploy bugs in one day — schema column drift (001→002),
+  `.not(in, "(SELECT ...)")` URL-encoding broken in PostgREST, and
+  the SQL `NULL NOT IN (...)` three-valued-logic trap. All three
+  did the wrong thing silently; none produced errors a "no errors
+  during apply" check would catch. The pattern that catches this
+  class of bug is real Postgres + PostgREST + Auth + migrations
+  applied to a fresh DB + fixtures + a probe query that asserts
+  real behavior. That stack is what the on-demand tester pool
+  (`scripts/test-env-up.sh` / `down.sh` / `verify.sh`) builds.
+  Treat "does this fix work?" as "does this fix work against a
+  fresh local stack?" — not "does `npm run build` pass?".
+  Build-passing is a necessary-but-not-sufficient gate for
+  anything that touches DB-backed application code. The full
+  architecture proposal is at
+  `~/.hermes/messages/2026-09-11-on-demand-tester-pool-phase-1-proposal.md`
+  (one-time session artifact; the durable shape lives in
+  `docs/testing/` in the repo once Phase 1 implementation lands).
+  Don't ship DB-touching fixes to Vercel preview without a local
+  round-trip first.
+- **Verify user-flagged fixes actually made it into the document
+  before building on the document.** When the user says "the
+  content-capture fix I flagged a couple messages back — confirm
+  it's in the spec before you start building," that's a request
+  to re-verify the current state of the spec, not to take their
+  word that the flag was acknowledged. The right move is to grep
+  the spec for the relevant marker (function names, array names,
+  whatever the user named) and either confirm presence or fix the
+  gap before continuing. Concretely: the 2026-09-11 Phase 1 scope
+  doc went through three revisions before the content-capture
+  blocks landed; Aaron asked explicitly because he wanted to
+  verify the third revision actually had the change. If I'd just
+  said "yes, that's in there" without checking, I'd have built
+  scripts around an incomplete spec. The meta-rule: when the user
+  asks "did X land in Y?", the answer is "let me check" not
+  "yes" — unless you've just read the relevant section in the
+  current turn. Same applies to user-flagged gaps in the codebase
+  ("is feature X actually implemented?" — `git grep` or read the
+  file before answering, don't answer from memory of an earlier
+  session).
 
 - **Prefer one consolidated reviewer over many separate specialist
   reviewers. More agents means more coordination surface.** Sept 2026:
