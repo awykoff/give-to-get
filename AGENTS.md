@@ -173,6 +173,14 @@ that touches the Edge Function fails with a generic `fetch failed`.
   which fails on every prod request.
 - `SUPABASE_EDGE_FN_URL_EXPORT` — base URL for the export-generator
   Edge Function, read by `src/app/api/export/route.ts`.
+- `RESEND_API_KEY` — Resend transactional email API key, used by
+  `src/app/api/network/invites/route.ts` to send invite notifications
+  (added 2026-09-08 via PR #15, closes Issue #11). If unset, the
+  route logs an `[email] RESEND_API_KEY is not set` error and skips
+  the send but still returns 201 (the invite row is already
+  committed). See `docs/operations/network-invite-email-setup.md`
+  for the full Resend setup checklist and ADR 0002 for the
+  failure-mode contract.
 
 **Naming inconsistency flag:** the two Edge-Function URL vars are
 named differently (`SUPABASE_EDGE_FN_URL` for import,
