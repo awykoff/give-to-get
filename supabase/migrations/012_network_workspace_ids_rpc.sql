@@ -76,7 +76,7 @@ SECURITY DEFINER
 STABLE
 SET search_path = ''
 AS $$
-  SELECT workspace_id FROM v_my_network_workspace_ids;
+  SELECT workspace_id FROM public.v_my_network_workspace_ids;
 $$;
 
 REVOKE ALL ON FUNCTION public.network_workspace_ids() FROM PUBLIC;
