@@ -1,7 +1,7 @@
 ---
 name: givetoget-database
 description: Postgres migrations, RLS policies, and triggers for give-to-get.com's Supabase schema
-version: 1.1.0
+version: 1.2.0
 metadata:
   hermes:
     tags: [supabase, postgres, rls, givetoget]
@@ -162,14 +162,39 @@ See `references/auth-schema-lookups.md` for the full rationale.
   permit one row and the application must filter the other out
   explicitly. Concrete shape (seen Sept 2026): the new
   `contacts_network_select` policy made connection-gated contacts
-  visible to the viewer's anon-keyed query — the only fix is for
-  the Contacts page's own query to add
-  `.not("contributed_by_workspace_id", "in", "(SELECT workspace_id FROM v_my_network_workspace_ids)")`.
+  visible to the viewer's anon-keyed query. The Contacts page's own
+  query must explicitly exclude connection-gated contacts.
   When writing a new RLS policy that broadens visibility, always
   audit every existing query path that reads the same table and
   decide whether each needs a defensive filter. This is application-
   query-scoping responsibility, not a database concern that can be
   resolved by RLS alone.
+- **`.not(in, "(SELECT ...)")` is silently broken on PostgREST.**
+  The natural defensive filter against the broadened RLS policy is
+  `.not("col", "in", "(SELECT ...)")`. This LOOKS like a subquery
+  to a developer reading the code. It is not. PostgREST URL-encodes
+  the embedded SELECT as a literal string and sends it to Postgres,
+  which then tries to compare a UUID column against the literal text
+  `"SELECT workspace_id FROM ..."` and raises
+  `invalid input syntax for type uuid: "SELECT workspace_id FROM ..."`
+  (observed on give-to-get.com production 2026-09-11). The query
+  returns 0 rows silently; the `?? []` empty-state fallback hides
+  the error as "0 contacts".
+
+  **The fix is a SECURITY DEFINER RPC**, not a different embedded
+  SELECT shape. PostgREST inlines RPCs in filter expressions
+  server-side, so `.not("col", "in", "public.network_workspace_ids()")`
+  evaluates against real UUID values, the client never sees the
+  workspace IDs, and the privacy boundary the embedded-SELECT was
+  designed to provide is preserved. The canonical example is
+  `public.network_workspace_ids()` in migration
+  `012_network_workspace_ids_rpc.sql` — same pattern as
+  `public.user_id_for_email` (009) and `public.workspace_id_for_user`
+  (010). The original `v_my_network_workspace_ids` view stays in
+  place because RLS policy subqueries are evaluated directly by
+  Postgres (not URL-encoded through PostgREST), so the view works
+  fine for that path; the function exists specifically for the
+  client-side filter use case.
 - Forgetting RLS on a junction table (`export_contacts`,
   `workspace_contact_access`) because "it's just a join table" — these leak
   contact access just as easily as the primary tables.
