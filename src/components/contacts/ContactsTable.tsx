@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { ContactFilters } from "./FilterPanel";
 
 const PAGE_SIZE = 50;
 
@@ -31,13 +30,12 @@ interface Contact {
 }
 
 interface Props {
-  filters: ContactFilters;
   onSelectionChange: (ids: string[]) => void;
 }
 
 const COLS = ["Name", "Title", "Company", "Vertical", "Seniority", "Location", "Co. size", "Email"];
 
-export default function ContactsTable({ filters, onSelectionChange }: Props) {
+export default function ContactsTable({ onSelectionChange }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -90,41 +88,17 @@ export default function ContactsTable({ filters, onSelectionChange }: Props) {
       "public.network_workspace_ids()",
     );
 
-    if (filters.verticals.length > 0) {
-      query = query.in("vertical", filters.verticals);
-    }
-    if (filters.seniorities.length > 0) {
-      query = query.in("seniority", filters.seniorities);
-    }
-    // Company-size filter: disabled in this fix. The schema column
-    // `num_employees` is INTEGER (single value), but FilterPanel
-    // sends range labels ("1-10", "51-200", "5000+", etc.) as the
-    // filter value. A range-label-to-integer comparison would never
-    // match. Fixing this properly requires translating the label
-    // into a `num_employees BETWEEN <lo> AND <hi>` clause at the
-    // query layer (or bucketing in the UI). Tracked as follow-up;
-    // see ~/.hermes/messages/2026-09-11-contacts-schema-drift-fix-proposal.md
-    // section "Filter UI side".
-    // if (filters.companySize) {
-    //   // query = query.between("num_employees", lower, upper);
-    // }
-    if (filters.location) {
-      query = query.or(
-        `city.ilike.%${filters.location}%,state.ilike.%${filters.location}%,country.ilike.%${filters.location}%`
-      );
-    }
-
     const { data, count } = await query;
     setContacts((data ?? []) as Contact[]);
     setTotal(count ?? 0);
     setLoading(false);
     setSelected(new Set());
-  }, [filters]);
+  }, []);
 
   useEffect(() => {
     setPage(0);
     fetchContacts(0);
-  }, [filters, fetchContacts]);
+  }, [fetchContacts]);
 
   useEffect(() => {
     if (page > 0) fetchContacts(page);

@@ -1,19 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import FilterPanel, { type ContactFilters } from "@/components/contacts/FilterPanel";
 import ContactsTable from "@/components/contacts/ContactsTable";
 import ExportButton from "@/components/contacts/ExportButton";
 
-const DEFAULT_FILTERS: ContactFilters = {
-  verticals: [],
-  seniorities: [],
-  companySize: "",
-  location: "",
-};
-
 export default function ContactsPage() {
-  const [filters, setFilters] = useState<ContactFilters>(DEFAULT_FILTERS);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const handleSelectionChange = useCallback((ids: string[]) => {
@@ -23,7 +14,7 @@ export default function ContactsPage() {
   const handleExportComplete = useCallback(() => {
     // Clear the selection after a successful export so the export row above
     // the table collapses. ContactsTable will reset its own selection on
-    // the next fetch (it already does this on filter changes).
+    // the next fetch.
     setSelectedIds([]);
   }, []);
 
@@ -72,15 +63,7 @@ export default function ContactsPage() {
       )}
 
       <div style={{ display: "flex", gap: "24px", alignItems: "flex-start" }}>
-        <FilterPanel
-          filters={filters}
-          onChange={setFilters}
-          onClear={() => setFilters(DEFAULT_FILTERS)}
-        />
-        <ContactsTable
-          filters={filters}
-          onSelectionChange={handleSelectionChange}
-        />
+        <ContactsTable onSelectionChange={handleSelectionChange} />
       </div>
     </div>
   );
