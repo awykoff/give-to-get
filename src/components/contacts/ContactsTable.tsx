@@ -54,40 +54,6 @@ export default function ContactsTable({ onSelectionChange }: Props) {
       .range(pageNum * PAGE_SIZE, (pageNum + 1) * PAGE_SIZE - 1)
       .order("created_at", { ascending: false });
 
-    // Defensive exclusion (PRD §5.7 + Critical Rules):
-    // The RLS policy `contacts_network_select` (added by
-    // 008_workspace_connections.sql) intentionally makes
-    // connection-gated contacts visible to the caller's anon-keyed
-    // query when the caller has an accepted workspace_connections
-    // row to the contributing workspace. RLS alone cannot enforce
-    // "only visible in My Network", so the general Contacts page
-    // must explicitly filter out rows that would leak via that
-    // path.
-    //
-    // The previous implementation used
-    //   .not("col", "in", "(SELECT workspace_id FROM v_my_network_workspace_ids)")
-    // which failed on production (PostgREST URL-encodes the embedded
-    // SELECT as a literal string, so Postgres tries to compare a UUID
-    // column against the literal text "SELECT workspace_id FROM ..."
-    // and raises 'invalid input syntax for type uuid'). Observed on
-    // give-to-get.com 2026-09-11.
-    //
-    // The fix is to evaluate the inner SELECT server-side via the
-    // SECURITY DEFINER RPC public.network_workspace_ids() (migration
-    // 012). PostgREST inlines the RPC in the filter expression
-    // server-side, so the comparison happens against real UUID
-    // values and the client never sees the workspace IDs (privacy
-    // boundary preserved).
-    //
-    // This is a security boundary. DO NOT remove it without reading
-    // the privacy rule in PRD §7 and confirming the Contacts page's
-    // own query path is not the leak vector it once was.
-    query = query.not(
-      "contributed_by_workspace_id",
-      "in",
-      "public.network_workspace_ids()",
-    );
-
     const { data, count } = await query;
     setContacts((data ?? []) as Contact[]);
     setTotal(count ?? 0);
