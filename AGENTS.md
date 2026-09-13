@@ -140,6 +140,43 @@ Skill directory (see each `SKILL.md` for full detail):
   Convention: contributor-facing docs live in `docs/`; per-contributor
   working vaults stay local and never get committed to this repo.
 
+## External reviewers (non-Hermes collaborators)
+
+Hermes isn't the only quality gate on this project. The Lead Developer
+(and Aaron personally) share review duty with an external collaborator
+who has no Hermes-framework runtime presence. Document it here so a
+future contributor or agent doesn't assume shared mechanics.
+
+### Claude (cloud) — Reviewing Lead Developer
+
+Claude, accessed via Aaron's claude.ai chat interface, is **NOT a
+Hermes-framework agent** — it has no local runtime presence, no
+`SOUL.md`, and isn't invoked the way Sariputra / Ananda / Moggallana
+are. It's a separate product. Aaron is the sole channel between it and
+whichever Hermes agent is active: he pastes Claude's drafted messages
+into the Hermes terminal, and relays responses back (screenshot, or
+preferably `cat <file> | pbcopy` for anything long — see the
+`givetoget-lead-developer` skill's output-format convention).
+
+**Role.** Reviews proposals, patches, and migration files before
+they're applied. Verifies claims directly against production (via a
+separate browser session with Supabase SQL Editor access) rather than
+trusting summaries. Holds a propose-first gate on production-adjacent
+changes alongside Aaron's own standing rules. Has no direct terminal or
+filesystem access to Aaron's machine or to any Hermes agent's session —
+everything is mediated by Aaron, or by Claude's own separate read-only
+browser verification.
+
+**Review discipline.** When a proposal or patch needs Claude's review,
+present raw file content (`cat <file> | pbcopy`) rather than a summary.
+This review discipline depends on reading actual content, not
+paraphrases, and has caught real bugs this project that a summary would
+have missed. If you're tempted to summarize instead, the answer is
+"no — give the raw file."
+
+**Cross-link.** See `docs/obsidian-vault/02-Agents/Claude-Cloud-Reviewer.md`
+for the same content in vault-side form.
+
 ## Build phase sequence
 
 ```
