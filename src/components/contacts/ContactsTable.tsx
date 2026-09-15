@@ -1,322 +1,173 @@
+// src/components/contacts/ContactsTable.tsx
+// ---------------------------------------------------------------------------
+// Contacts page table — a thin stateful wrapper around the shared DataTable.
+//
+// Owns the page/sort/query/selection state and calls the search RPCs:
+//   - rows/count come from searchContacts (015) + search_contacts_count (016);
+//   - NO network-contributed-row exclusion — PR #20 merged network-partner
+//     contacts into the general pool; 015's WHERE has zero workspace logic
+//     and we keep it that way;
+//   - count is cached per distinct query string in search.ts, so page turns
+//     and sort-header clicks don't refetch it;
+//   - gated emails never reach the client (search.ts projects to the
+//     non-gated set + id + contributed_by_workspace_id).
+//
+// Preserves the existing page contract: `onSelectionChange(ids)` feeds
+// contacts/page.tsx's selection bar + ExportModal, and is called whenever
+// selection changes (including reset on each fetch).
+// ---------------------------------------------------------------------------
+
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import DataTable from "@/components/table/DataTable";
+import { CONTACT_COLUMNS } from "@/lib/table/column-defs";
+import { searchContacts, CONTACT_PAGE_SIZE, type ContactRow, type SortDir } from "@/lib/table/search";
+import { useColumnOrder } from "@/lib/table/useColumnOrder";
 
-const PAGE_SIZE = 50;
-
-const VERTICAL_COLORS: Record<string, { bg: string; text: string }> = {
-  SaaS:        { bg: "rgba(139,92,246,0.18)",  text: "#C4B5FD" },
-  FinTech:     { bg: "rgba(52,211,153,0.15)",  text: "#6EE7B7" },
-  MarTech:     { bg: "rgba(251,191,36,0.15)",  text: "#FDE68A" },
-  "Data & AI": { bg: "rgba(96,165,250,0.15)",  text: "#93C5FD" },
-  HRTech:      { bg: "rgba(248,113,113,0.15)", text: "#FCA5A5" },
-  HealthTech:  { bg: "rgba(52,211,153,0.12)",  text: "#6EE7B7" },
-  Other:       { bg: "rgba(255,255,255,0.07)", text: "#8B87A8" },
+type Props = {
+  onSelectionChange: (ids: string[]) => void;
 };
 
-interface Contact {
-  id: string;
-  first_name: string | null;
-  last_name: string | null;
-  title: string | null;
-  company_name: string | null;
-  vertical: string | null;
-  seniority: string | null;
-  city: string | null;
-  state: string | null;
-  country: string | null;
-  num_employees: number | null;
+// Debounce: don't fire a search RPC on every keystroke. Wait for a quiet
+// gap so the server-side substring search runs on a settled query.
+function useDebouncedValue(value: string, ms: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
 }
-
-interface Props {
-  onSelectionChange: (ids: string[]) => void;
-}
-
-const COLS = ["Name", "Title", "Company", "Vertical", "Seniority", "Location", "Co. size", "Email"];
 
 export default function ContactsTable({ onSelectionChange }: Props) {
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [total, setTotal] = useState(0);
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 300);
+
   const [page, setPage] = useState(0);
+  const [sortKey, setSortKey] = useState("created_at");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const [rows, setRows] = useState<ContactRow[]>([]);
+  const [count, setCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const fetchContacts = useCallback(async (pageNum: number) => {
-    setLoading(true);
-    const supabase = createClient();
-    let query = supabase
-      .from("contacts")
-      .select(
-        "id, first_name, last_name, title, company_name, vertical, seniority, city, state, country, num_employees",
-        { count: "exact" }
-      )
-      .range(pageNum * PAGE_SIZE, (pageNum + 1) * PAGE_SIZE - 1)
-      .order("created_at", { ascending: false });
+  const [columnOrder, setColumnOrder] = useColumnOrder(
+    "give-to-get-contacts-column-order",
+    CONTACT_COLUMNS.map((c) => c.key)
+  );
 
-    // Defensive exclusion (PRD §5.7 + Critical Rules):
-    // The RLS policy `contacts_network_select` (added by
-    // 008_workspace_connections.sql) intentionally makes
-    // connection-gated contacts visible to the caller's anon-keyed
-    // query when the caller has an accepted workspace_connections
-    // row to the contributing workspace. RLS alone cannot enforce
-    // "only visible in My Network", so the general Contacts page
-    // must explicitly filter out rows that would leak via that
-    // path.
-    //
-    // The previous implementation used
-    //   .not("col", "in", "(SELECT workspace_id FROM v_my_network_workspace_ids)")
-    // which failed on production (PostgREST URL-encodes the embedded
-    // SELECT as a literal string, so Postgres tries to compare a UUID
-    // column against the literal text "SELECT workspace_id FROM ..."
-    // and raises 'invalid input syntax for type uuid'). Observed on
-    // give-to-get.com 2026-09-11.
-    //
-    // The fix is to evaluate the inner SELECT server-side via the
-    // SECURITY DEFINER RPC public.network_workspace_ids() (migration
-    // 012). PostgREST inlines the RPC in the filter expression
-    // server-side, so the comparison happens against real UUID
-    // values and the client never sees the workspace IDs (privacy
-    // boundary preserved).
-    //
-    // This is a security boundary. DO NOT remove it without reading
-    // the privacy rule in PRD §7 and confirming the Contacts page's
-    // own query path is not the leak vector it once was.
-    query = query.not(
-      "contributed_by_workspace_id",
-      "in",
-      "public.network_workspace_ids()",
-    );
-
-    const { data, count } = await query;
-    setContacts((data ?? []) as Contact[]);
-    setTotal(count ?? 0);
-    setLoading(false);
-    setSelected(new Set());
-  }, []);
-
+  // Reset to page 0 whenever the query/sort changes.
   useEffect(() => {
     setPage(0);
-    fetchContacts(0);
-  }, [fetchContacts]);
+  }, [debouncedQuery, sortKey, sortDir]);
 
+  // Fetch on mount + page/query/sort changes. count is cached per query in
+  // search.ts, so only rows refetch on page/sort changes for the same query.
   useEffect(() => {
-    if (page > 0) fetchContacts(page);
-  }, [page, fetchContacts]);
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
 
+    searchContacts({
+      query: debouncedQuery,
+      page,
+      pageSize: CONTACT_PAGE_SIZE,
+      sortColumn: sortKey,
+      sortAscending: sortDir === "asc",
+    })
+      .then(({ data, count: c }) => {
+        if (cancelled) return;
+        setRows(data);
+        setCount(c ?? 0);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Couldn't load contacts. Try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery, page, sortKey, sortDir]);
+
+  // Reset selection on each fetch (matches the old ContactsTable behavior —
+  // the exported selection must reflect what's currently visible).
+  useEffect(() => {
+    setSelected(new Set());
+  }, [debouncedQuery, page, sortKey, sortDir]);
+
+  // Push selection up to the page (selection bar + ExportModal).
   useEffect(() => {
     onSelectionChange(Array.from(selected));
   }, [selected, onSelectionChange]);
 
-  const allSelected = contacts.length > 0 && contacts.every((c) => selected.has(c.id));
+  const handleSort = useCallback(
+    (key: string) => {
+      if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      else {
+        setSortKey(key);
+        setSortDir("asc");
+      }
+    },
+    [sortKey]
+  );
 
-  const toggleAll = () => {
-    if (allSelected) {
-      setSelected((prev) => {
-        const next = new Set(prev);
-        contacts.forEach((c) => next.delete(c.id));
-        return next;
-      });
-    } else {
-      setSelected((prev) => {
-        const next = new Set(prev);
-        contacts.forEach((c) => next.add(c.id));
-        return next;
-      });
-    }
-  };
-
-  const toggleRow = (id: string) => {
+  const handleToggle = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  };
+  }, []);
 
-  const location = (c: Contact) =>
-    [c.city, c.state, c.country].filter(Boolean).join(", ") || "—";
+  const handleToggleAll = useCallback(() => {
+    setSelected((prev) => {
+      const allVisibleOnPage = rows.length > 0 && rows.every((r) => prev.has(String(r.id)));
+      const next = new Set(prev);
+      if (allVisibleOnPage) rows.forEach((r) => next.delete(String(r.id)));
+      else rows.forEach((r) => next.add(String(r.id)));
+      return next;
+    });
+  }, [rows]);
 
-  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(count / CONTACT_PAGE_SIZE));
+  // DataTable receives totalPages (parent-computed); it has no pageSize prop.
 
   return (
-    <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "12px" }}>
-      {/* Results bar */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: "12px", color: "#4E4A66" }}>
-          {loading ? "Loading…" : `${total.toLocaleString()} contacts`}
-          {selected.size > 0 && (
-            <span style={{ color: "#C4B5FD", marginLeft: "10px", fontWeight: 600 }}>
-              {selected.size} selected
-            </span>
-          )}
-        </span>
-        {totalPages > 1 && (
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <button
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
-              style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "5px", padding: "4px 10px", color: page === 0 ? "#4E4A66" : "#F0EEFF", fontSize: "12px", cursor: page === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}
-            >
-              ←
-            </button>
-            <span style={{ fontSize: "12px", color: "#8B87A8" }}>
-              {page + 1} / {totalPages}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              disabled={page >= totalPages - 1}
-              style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "5px", padding: "4px 10px", color: page >= totalPages - 1 ? "#4E4A66" : "#F0EEFF", fontSize: "12px", cursor: page >= totalPages - 1 ? "not-allowed" : "pointer", fontFamily: "inherit" }}
-            >
-              →
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Table */}
-      <div style={{ background: "#18181D", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "10px", overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "720px" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-                {/* Select all */}
-                <th style={{ width: "40px", padding: "10px 12px 10px 16px" }}>
-                  <Checkbox checked={allSelected} indeterminate={selected.size > 0 && !allSelected} onChange={toggleAll} />
-                </th>
-                {COLS.map((col) => (
-                  <th key={col} style={{
-                    padding: "10px 12px",
-                    textAlign: "left",
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.08em",
-                    color: "#4E4A66",
-                    whiteSpace: "nowrap",
-                  }}>
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                Array.from({ length: 10 }).map((_, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                    <td style={{ padding: "10px 12px 10px 16px" }} />
-                    {COLS.map((c) => (
-                      <td key={c} style={{ padding: "10px 12px" }}>
-                        <div style={{ height: "12px", borderRadius: "4px", background: "rgba(255,255,255,0.05)", width: `${50 + Math.random() * 40}%` }} />
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              ) : contacts.length === 0 ? (
-                <tr>
-                  <td colSpan={COLS.length + 1} style={{ padding: "48px 20px", textAlign: "center", color: "#4E4A66", fontSize: "13px" }}>
-                    No contacts match your filters.
-                  </td>
-                </tr>
-              ) : (
-                contacts.map((c) => {
-                  const isSelected = selected.has(c.id);
-                  const vColors = c.vertical ? (VERTICAL_COLORS[c.vertical] ?? VERTICAL_COLORS.Other) : null;
-                  return (
-                    <tr
-                      key={c.id}
-                      onClick={() => toggleRow(c.id)}
-                      style={{
-                        borderBottom: "1px solid rgba(255,255,255,0.04)",
-                        background: isSelected ? "rgba(139,92,246,0.06)" : "transparent",
-                        cursor: "pointer",
-                        transition: "background 0.1s",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(139,92,246,0.04)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLElement).style.background = isSelected ? "rgba(139,92,246,0.06)" : "transparent";
-                      }}
-                    >
-                      <td style={{ padding: "0 12px 0 16px", width: "40px" }} onClick={(e) => e.stopPropagation()}>
-                        <Checkbox checked={isSelected} onChange={() => toggleRow(c.id)} />
-                      </td>
-                      <td style={{ padding: "10px 12px", fontSize: "13px", color: "#F0EEFF", whiteSpace: "nowrap", fontWeight: 500 }}>
-                        {[c.first_name, c.last_name].filter(Boolean).join(" ") || "—"}
-                      </td>
-                      <td style={{ padding: "10px 12px", fontSize: "13px", color: "#8B87A8", maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {c.title ?? "—"}
-                      </td>
-                      <td style={{ padding: "10px 12px", fontSize: "13px", color: "#8B87A8", maxWidth: "140px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {c.company_name ?? "—"}
-                      </td>
-                      <td style={{ padding: "10px 12px" }}>
-                        {vColors && c.vertical ? (
-                          <span style={{ fontSize: "11px", fontWeight: 600, background: vColors.bg, color: vColors.text, borderRadius: "5px", padding: "2px 8px", whiteSpace: "nowrap" }}>
-                            {c.vertical}
-                          </span>
-                        ) : <span style={{ color: "#4E4A66", fontSize: "13px" }}>—</span>}
-                      </td>
-                      <td style={{ padding: "10px 12px", fontSize: "12px", color: "#8B87A8", whiteSpace: "nowrap" }}>
-                        {c.seniority ?? "—"}
-                      </td>
-                      <td style={{ padding: "10px 12px", fontSize: "12px", color: "#8B87A8", whiteSpace: "nowrap" }}>
-                        {location(c)}
-                      </td>
-                      <td style={{ padding: "10px 12px", fontSize: "12px", color: "#8B87A8", whiteSpace: "nowrap" }}>
-                        {c.num_employees ?? "—"}
-                      </td>
-                      {/* Email — always gated */}
-                      <td style={{ padding: "10px 12px" }}>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "11px", color: "#4E4A66" }}>
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                          </svg>
-                          Gated
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <DataTable
+        columns={CONTACT_COLUMNS}
+        rows={rows as Record<string, unknown>[]}
+        count={count}
+        page={page}
+        totalPages={totalPages}
+        onPageChange={(p) => setPage(p)}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={handleSort}
+        columnOrder={columnOrder}
+        onColumnOrderChange={setColumnOrder}
+        query={query}
+        onQueryChange={setQuery}
+        loading={loading}
+        error={error}
+        hasGatedColumns
+        placeholder="Search by name, company, title... or paste a full email"
+        selection={{
+          selected,
+          onToggle: handleToggle,
+          onToggleAll: handleToggleAll,
+          allSelected: rows.length > 0 && rows.every((r) => selected.has(String(r.id))),
+          someSelected: selected.size > 0 && !(rows.length > 0 && rows.every((r) => selected.has(String(r.id)))),
+        }}
+      />
     </div>
-  );
-}
-
-function Checkbox({ checked, indeterminate, onChange }: { checked: boolean; indeterminate?: boolean; onChange: () => void }) {
-  return (
-    <button
-      onClick={onChange}
-      style={{
-        width: "16px",
-        height: "16px",
-        borderRadius: "4px",
-        border: checked || indeterminate ? "none" : "1px solid rgba(255,255,255,0.15)",
-        background: checked ? "#8B5CF6" : indeterminate ? "rgba(139,92,246,0.4)" : "transparent",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-        padding: 0,
-      }}
-    >
-      {checked && (
-        <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
-          <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
-      {indeterminate && !checked && (
-        <svg width="8" height="2" viewBox="0 0 8 2" fill="none">
-          <line x1="0" y1="1" x2="8" y2="1" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-      )}
-    </button>
   );
 }
