@@ -12,8 +12,8 @@
 // schema and these defs together.
 //
 // Column counts (twice-independently-verified): contacts 60, companies 33.
-// The 4 actually-gated contact fields are email, email_normalized,
-// secondary_email, tertiary_email. Everything else is displayable.
+// The 5 gated contact fields are email, email_normalized, secondary_email,
+// tertiary_email, last_name. Everything else is displayable.
 // Email-METADATA fields (email_status, email_source, email_verification_source,
 // email_confidence, email_catch_all_status, email_last_verified_at,
 // secondary_email_source, secondary_email_status, tertiary_email_source,
@@ -42,7 +42,7 @@ export type ColumnDef = {
 // --- Contacts (60 columns) — verbatim from mockup ---
 export const CONTACT_COLUMNS: ColumnDef[] = [
   { key: "first_name", label: "First Name", type: "text", width: 120 },
-  { key: "last_name", label: "Last Name", type: "text", width: 120 },
+  { key: "last_name", label: "Last Name", type: "text", gated: true, width: 120 },
   { key: "email", label: "Email", type: "text", gated: true, width: 170 },
   { key: "email_normalized", label: "Email (Normalized)", type: "text", gated: true, width: 190 },
   { key: "email_status", label: "Email Status", type: "text", width: 130 },
@@ -146,6 +146,7 @@ export const CONTACT_GATED_KEYS: readonly string[] = [
   "email_normalized",
   "secondary_email",
   "tertiary_email",
+  "last_name",
 ];
 
 // Projection for search_contacts: id + contributed_by_workspace_id +
@@ -177,6 +178,6 @@ export function assertColumnCounts() {
   if (COMPANY_COLUMNS.length !== 33)
     throw new Error(`COMPANY_COLUMNS has ${COMPANY_COLUMNS.length}, expected 33`);
   const gated = CONTACT_COLUMNS.filter((c) => c.gated).map((c) => c.key);
-  if (gated.join(",") !== "email,email_normalized,secondary_email,tertiary_email")
+  if (gated.join(",") !== "email,email_normalized,secondary_email,tertiary_email,last_name")
     throw new Error(`gated set drift: ${gated.join(",")}`);
 }
