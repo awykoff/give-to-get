@@ -80,6 +80,15 @@ const CONTACT_INSERT_COLUMNS = [
   "industry",
   "num_employees",
   "annual_revenue",
+  "total_funding",
+  "company_city",
+  "company_state",
+  "company_country",
+  "company_address",
+  "company_phone",
+  "keywords",
+  "technologies",
+  "departments",
   "linkedin_url",
   "twitter_url",
   "facebook_url",
@@ -156,6 +165,7 @@ function coerceForColumn(
   switch (column) {
     case "num_employees":
     case "annual_revenue":
+    case "total_funding":
     case "quality_score": {
       // For B2B CSVs employee count is frequently given as a range
       // ("51-200", "1,001-5,000", "10000+") or a single number ("100").
@@ -166,14 +176,22 @@ function coerceForColumn(
       // pass through. No digits at all → null. Range parsing beats
       // silent nulling — a "51-200" cell is clearly employee count, not
       // garbage, and we shouldn't drop it.
+      //
+      // Each segment must be FULLY numeric after stripping separators.
+      // A value like "$1 bil. - $5 bil." (word-form amounts ZoomInfo emits
+      // as a separate Revenue Range column) becomes "1bil."/"5bil." after
+      // the strip — neither matches /^-?\d+$/, so they're rejected and the
+      // whole cell returns null (NULL in the DB) rather than a bogus
+      // midpoint picked off leading digits. Word-form amounts are not a
+      // number we can confidently coerce; storing NULL is honest.
       const stripped = trimmed.replace(/[,$%\s]/g, "");
       const parts = stripped.split(/[-+]/);
       const nums: number[] = [];
       for (const part of parts) {
-        const m = part.match(/^-?\d+/);
-        if (m) {
-          const n = Number(m[0]);
-          if (Number.isFinite(n)) nums.push(n);
+        if (!/^-?\d+$/.test(part)) continue;
+        const n = Number(part);
+        if (Number.isFinite(n)) {
+          nums.push(n);
           if (nums.length === 2) break;
         }
       }
@@ -188,9 +206,31 @@ function coerceForColumn(
       if (["false", "no", "n", "0", "f"].includes(v)) return false;
       return null;
     }
+    case "keywords":
+    case "technologies":
+    case "departments": {
+      // ZoomInfo array columns arrive as semicolon-delimited strings. Split
+      // into a trimmed, deduped text[] for the Postgres array column. An
+      // empty result (all-empty cells) becomes null so we don't insert [].
+      const arr = splitSemicolonList(trimmed);
+      return arr.length > 0 ? arr : null;
+    }
     default:
       return trimmed;
   }
+}
+
+// Split a semicolon-delimited cell (ZoomInfo array columns) into a
+// trimmed, de-duplicated string[]. ZoomInfo exports e.g. "Technologies",
+// "All Sub-Industries", and "Departments" as semicolon-delimited lists;
+// the contacts columns they map to are Postgres text[].
+function splitSemicolonList(value: string): string[] {
+  return Array.from(new Set(
+    value
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  ));
 }
 
 // Pull a canonical field out of a row given the reverse mapping.
@@ -355,6 +395,18 @@ Deno.serve(async (req) => {
       if (!raw) continue;
       const coerced = coerceForColumn(col, raw);
       if (coerced !== null) candidate[col] = coerced;
+      // ZoomInfo "Revenue (in 000s)" is in THOUSANDS — 1,701,063 means
+      // $1.701B, not $1.7M. When the source header that mapped to
+      // annual_revenue was revenue_in_000s, multiply by 1000 so the stored
+      // value is in dollars. Runs AFTER the base numeric coercion (coerced
+      // is already a number). A file with a true annual_revenue column keeps
+      // no multiplier because its source key won't match revenue_in_000s.
+      if (col === "annual_revenue" && coerced !== null) {
+        const sourceRaw = Object.keys(reverseMap).find((k) => reverseMap[k] === "annual_revenue");
+        if (sourceRaw && /^revenue_in_000s/.test(sourceRaw)) {
+          candidate[col] = (coerced as number) * 1000;
+        }
+      }
     }
 
     candidates.push(candidate);
