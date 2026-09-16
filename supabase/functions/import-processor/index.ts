@@ -450,7 +450,7 @@ Deno.serve(async (req) => {
   // array is already LOWER normalized (we did it above) and
   // email_normalized = LOWER(TRIM(email)), so direct equality is correct
   // for non-whitespace inputs. We chunk to keep the URL length reasonable.
-  const IN_CHUNK = 500;
+  const IN_CHUNK = 50;
   for (let i = 0; i < candidateEmails.length; i += IN_CHUNK) {
     const slice = candidateEmails.slice(i, i + IN_CHUNK);
     const { data, error } = await supabase
