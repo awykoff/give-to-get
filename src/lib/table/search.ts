@@ -47,6 +47,9 @@ type SearchParams = {
   pageSize: number;
   sortColumn: string;
   sortAscending: boolean;
+  /** Optional list-name filter (migration 019 p_list). When set, results
+   *  and the count are restricted to rows tagged in that list. */
+  p_list?: string | null;
 };
 
 export type SortDir = "asc" | "desc";
@@ -80,23 +83,26 @@ function assertValidSortKey(kind: "contacts" | "companies", sortColumn: string) 
 // cache is in-memory per page-load; a full reload naturally re-queries.
 const countCache = new Map<string, number>();
 
-async function getCount(rpcName: string, query: string): Promise<number> {
-  const cached = countCache.get(rpcName + "\u0000" + query);
+async function getCount(rpcName: string, query: string, p_list?: string | null): Promise<number> {
+  // Count depends on BOTH the query and (when filtering) the list. Include the
+  // list in the key so a filtered view never reuses an unfiltered count.
+  const key = rpcName + "\u0000" + (p_list ?? "") + "\u0000" + query;
+  const cached = countCache.get(key);
   if (cached !== undefined) return cached;
   const supabase = createClient();
-  const { data, error } = await supabase.rpc(rpcName, { p_query: query });
+  const { data, error } = await supabase.rpc(rpcName, { p_query: query, p_list: p_list ?? null });
   if (error) throw error;
   const n = typeof data === "number" ? data : 0;
-  countCache.set(rpcName + "\u0000" + query, n);
+  countCache.set(key, n);
   return n;
 }
 
-function getContactCount(query: string): Promise<number> {
-  return getCount("search_contacts_count", query);
+function getContactCount(query: string, p_list?: string | null): Promise<number> {
+  return getCount("search_contacts_count", query, p_list);
 }
 
-function getCompanyCount(query: string): Promise<number> {
-  return getCount("search_companies_count", query);
+function getCompanyCount(query: string, p_list?: string | null): Promise<number> {
+  return getCount("search_companies_count", query, p_list);
 }
 
 export async function searchContacts(
@@ -110,6 +116,7 @@ export async function searchContacts(
     p_offset: params.page * params.pageSize,
     p_sort_column: params.sortColumn,
     p_sort_ascending: params.sortAscending,
+    p_list: params.p_list ?? null,
   });
 
   if (error) throw error;
@@ -126,7 +133,7 @@ export async function searchContacts(
     return out as ContactRow;
   });
 
-  const count = await getContactCount(params.query);
+  const count = await getContactCount(params.query, params.p_list);
 
   return { data: rows, count };
 }
@@ -142,6 +149,7 @@ export async function searchCompanies(
     p_offset: params.page * params.pageSize,
     p_sort_column: params.sortColumn,
     p_sort_ascending: params.sortAscending,
+    p_list: params.p_list ?? null,
   });
 
   if (error) throw error;
@@ -155,7 +163,7 @@ export async function searchCompanies(
     return out as CompanyRow;
   });
 
-  const count = await getCompanyCount(params.query);
+  const count = await getCompanyCount(params.query, params.p_list);
 
   return { data: rows, count };
 }
