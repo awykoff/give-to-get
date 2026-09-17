@@ -11,8 +11,17 @@
 //
 // Pipeline (steps 1–8 from the brief):
 //   1. Fetch the contacts by ID via the service-role client.
-//   2. Compute credits_spent = contact_ids.length (1 credit per contact).
-//      Compute contact_count = contact_ids.length.
+//   2. Compute the free/paid split:
+//      - contacts whose contributed_by_workspace_id is in the caller's
+//        accepted-network set OR equals the caller's own workspace_id
+//        are FREE (no credit charge). This honors Critical Business Rule
+//        #3's "credit unlock or own contribution" clause -- contacts
+//        contributed by the caller's workspace, or by a workspace the
+//        caller has an accepted network connection with, are always free
+//        to export.
+//      - contacts from the general pool cost 1 credit each.
+//      contact_count = total selected contacts (unchanged).
+//      credits_spent = paid_count (general-pool contacts only).
 //   3. Pre-flight credit balance check — bail 402 BEFORE any file work.
 //   4. INSERT exports row at status='processing'. The DB trigger
 //      trg_export_credits -> handle_export_created() validates the balance
@@ -263,7 +272,7 @@ Deno.serve(async (req) => {
     const { data, error } = await supabase
       .from("contacts")
       .select(
-        "id, first_name, last_name, email, title, seniority, company_name, " +
+        "id, contributed_by_workspace_id, first_name, last_name, email, title, seniority, company_name, " +
           "city, state, country, vertical, industry, linkedin_url, " +
           "work_direct_phone, mobile_phone, corporate_phone, num_employees, annual_revenue",
       )
@@ -289,9 +298,66 @@ Deno.serve(async (req) => {
     return out;
   });
 
+  // ── Step 1.5: resolve the caller's free-export set. ─────────────────
+  // Critical Business Rule #3 (email gating): contacts are free to export
+  // when contributed by the caller's own workspace OR when the caller
+  // has an accepted network connection with the contributing workspace.
+  // The trigger at private.handle_export_created() validates
+  // credits_spent against the balance and writes the credits_ledger
+  // 'spend' row at INSERT time, so the math has to happen here before
+  // we INSERT into exports.
+  //
+  // We query workspace_connections directly instead of using the
+  // v_my_network_workspace_ids view because the view depends on
+  // auth.uid() (via private.auth_workspace_id()) which is NULL under
+  // service-role -- the Edge Function runs with the service-role key,
+  // so the view would return zero rows here. workspace_connections has
+  // indexes on both requester_workspace_id and recipient_workspace_id
+  // (migration 008), so this query is index-scoped regardless of table
+  // size. RLS is bypassed under service-role (and the table has no
+  // RLS policies anyway).
+  const { data: connectionRows, error: connErr } = await supabase
+    .from("workspace_connections")
+    .select("requester_workspace_id, recipient_workspace_id, status")
+    .or(
+      `requester_workspace_id.eq.${workspaceId},recipient_workspace_id.eq.${workspaceId}`,
+    )
+    .eq("status", "accepted");
+
+  if (connErr) {
+    return jsonResponse(
+      { error: `workspace_connections read failed: ${connErr.message}` },
+      { status: 500 },
+    );
+  }
+
+  // Build the set of workspaces whose contacts are FREE for this caller:
+  //   - partner workspaces (caller has an accepted connection with them)
+  //   - the caller's own workspace (own-contribution per Rule #3)
+  const freeWorkspaceIds = new Set<string>([workspaceId]);
+  for (const row of connectionRows ?? []) {
+    const r = row as {
+      requester_workspace_id: string;
+      recipient_workspace_id: string;
+    };
+    if (r.requester_workspace_id === workspaceId) {
+      freeWorkspaceIds.add(r.recipient_workspace_id);
+    } else if (r.recipient_workspace_id === workspaceId) {
+      freeWorkspaceIds.add(r.requester_workspace_id);
+    }
+  }
+
   // ── Step 2: cost. ─────────────────────────────────────────────────────
   const contactCount = contactRows.length;
-  const creditsSpent = contactCount; // 1 credit per contact.
+  let freeCount = 0;
+  for (const row of contactRows) {
+    const cid = row.contributed_by_workspace_id as string | null;
+    if (cid && freeWorkspaceIds.has(cid)) {
+      freeCount++;
+    }
+  }
+  const paidCount = contactCount - freeCount;
+  const creditsSpent = paidCount; // only general-pool contacts cost credits
 
   // ── Step 3: pre-flight balance check. ─────────────────────────────────
   // The trigger re-checks at INSERT time, but we want to fail fast before
