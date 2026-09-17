@@ -28,6 +28,20 @@ const NAV = [
     ),
   },
   {
+    label: "People Lists",
+    href: "/lists/people",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+        <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+        <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+        <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+        <line x1="7" y1="12" x2="17" y2="12" />
+        <line x1="12" y1="7" x2="12" y2="17" />
+      </svg>
+    ),
+  },
+  {
     label: "Companies",
     href: "/companies",
     icon: (
@@ -40,6 +54,20 @@ const NAV = [
         <path d="M10 7h4" />
         <path d="M10 11h4" />
         <path d="M10 15h4" />
+      </svg>
+    ),
+  },
+  {
+    label: "Company Lists",
+    href: "/lists/companies",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+        <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+        <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+        <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+        <line x1="7" y1="12" x2="17" y2="12" />
+        <line x1="12" y1="7" x2="12" y2="17" />
       </svg>
     ),
   },
