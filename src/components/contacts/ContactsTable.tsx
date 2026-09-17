@@ -20,6 +20,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import DataTable from "@/components/table/DataTable";
 import { CONTACT_COLUMNS } from "@/lib/table/column-defs";
 import { searchContacts, CONTACT_PAGE_SIZE, type ContactRow, type SortDir } from "@/lib/table/search";
@@ -41,6 +42,11 @@ function useDebouncedValue(value: string, ms: number): string {
 }
 
 export default function ContactsTable({ onSelectionChange }: Props) {
+  const searchParams = useSearchParams();
+  // Already URL-decoded by useSearchParams — never re-decode (double-decodes
+  // names that legitimately contain % or +).
+  const listFilter = searchParams.get("list");
+
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 300);
 
@@ -60,10 +66,10 @@ export default function ContactsTable({ onSelectionChange }: Props) {
     CONTACT_COLUMNS.map((c) => c.key)
   );
 
-  // Reset to page 0 whenever the query/sort changes.
+  // Reset to page 0 whenever the query/sort/filter changes.
   useEffect(() => {
     setPage(0);
-  }, [debouncedQuery, sortKey, sortDir]);
+  }, [debouncedQuery, sortKey, sortDir, listFilter]);
 
   // Fetch on mount + page/query/sort changes. count is cached per query in
   // search.ts, so only rows refetch on page/sort changes for the same query.
@@ -78,6 +84,7 @@ export default function ContactsTable({ onSelectionChange }: Props) {
       pageSize: CONTACT_PAGE_SIZE,
       sortColumn: sortKey,
       sortAscending: sortDir === "asc",
+      p_list: listFilter,
     })
       .then(({ data, count: c }) => {
         if (cancelled) return;
@@ -95,13 +102,13 @@ export default function ContactsTable({ onSelectionChange }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, page, sortKey, sortDir]);
+  }, [debouncedQuery, page, sortKey, sortDir, listFilter]);
 
   // Reset selection on each fetch (matches the old ContactsTable behavior —
   // the exported selection must reflect what's currently visible).
   useEffect(() => {
     setSelected(new Set());
-  }, [debouncedQuery, page, sortKey, sortDir]);
+  }, [debouncedQuery, page, sortKey, sortDir, listFilter]);
 
   // Push selection up to the page (selection bar + ExportModal).
   useEffect(() => {
@@ -142,6 +149,45 @@ export default function ContactsTable({ onSelectionChange }: Props) {
 
   return (
     <div style={{ flex: 1, minWidth: 0 }}>
+      {listFilter && (
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px",
+            marginBottom: "10px",
+            padding: "5px 10px 5px 12px",
+            background: "rgba(139,92,246,0.12)",
+            border: "1px solid rgba(139,92,246,0.3)",
+            borderRadius: "999px",
+            fontSize: "12px",
+            color: "#C4B5FD",
+          }}
+        >
+          <span>
+            Filtered by list: <strong>{listFilter}</strong>
+          </span>
+          <a
+            href="/contacts"
+            aria-label="Clear list filter"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#C4B5FD",
+              textDecoration: "none",
+              width: "18px",
+              height: "18px",
+              borderRadius: "50%",
+              background: "rgba(139,92,246,0.2)",
+              fontSize: "12px",
+              lineHeight: "1",
+            }}
+          >
+            ×
+          </a>
+        </div>
+      )}
       <DataTable
         columns={CONTACT_COLUMNS}
         rows={rows as Record<string, unknown>[]}
