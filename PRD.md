@@ -1,6 +1,6 @@
 # Product Requirements Document — give-to-get.com
 
-**Version:** 1.5
+**Version:** 1.6
 **Date:** September 6, 2026
 **Status:** Active — v1 MVP + My Network (view-only sharing)
 **Owner:** Aaron Wykoff / A. Wykoff Consulting
@@ -10,7 +10,15 @@
 - **v1.2:** Scope reduced to capped free lookups (quota-based), bulk export always credit-gated.
 - **v1.3:** Simplified further. No export at all between connections, no lookup quota. Connected partners can **view** (never download/export) each other's contributed contacts, plus see each other's own contact info. New **My Network** navbar tab.
 - **v1.4:** Firmed up three items from v1.3's open questions into requirements: (1) "See Contacts" modal must paginate server-side, not render everything client-side; (2) a Settings/Profile page is now a required v1 feature, not optional; (3) **user profile data (name, phone, email) is explicitly walled off from the global `contacts` table — never merged, never searchable, never exportable via the credit-based flow.** This is a privacy requirement, not just an architecture preference.
-- **v1.5 (current):** Resolved the last open question — `phone_number` in `user_profiles` confirmed optional, not required at signup. Rationale documented in Section 5.8.
+- **v1.5:** Resolved the last open question — `phone_number` in `user_profiles` confirmed optional, not required at signup. Rationale documented in Section 5.8.
+- **v1.6 (current):** Two policy reversals. (1) Removed email gating entirely
+  — no field from an uploaded CSV is gated by viewing anymore, including
+  email; credits now gate export/download only, not visibility. (2)
+  Contacts contributed by an accepted My Network partner are now free to
+  export from the general Contacts/Companies pages (previously credits
+  applied uniformly across the pool) — rationale: partner contacts are
+  effectively pre-vetted through the relationship, and charging full price
+  would slow down networking rather than encourage it.
 
 ---
 
@@ -62,8 +70,9 @@ User uploads CSV
 
 User browses global database
   → Filters by vertical, seniority, location, company size
-  → Selects contacts (email gated until export)
-  → -1 credit per contact downloaded
+  → Selects contacts — full detail visible, including email; nothing is gated by viewing
+  → -1 credit per contact downloaded from the global pool — contacts you
+  contributed, or that came from an accepted My Network partner, are free
   → Export file generated (CSV / XLSX / JSON)
 ```
 
@@ -102,7 +111,7 @@ search/export system. See Section 5.7 and Section 7 Critical Rules.
 ### 5.3 Contact Database
 - Global shared contact pool (all workspaces contribute to one table)
 - Contact metadata visible to all: name, title, company, vertical, location, seniority
-- Email **gated** — only revealed after credit spend or own contribution
+- Email visible to all, same as other CSV-sourced metadata — never gated by viewing. Credits gate export/download only (Section 5.4), not visibility.
 - Filter panel: vertical, seniority, location (text), company (text)
 - Text search: name, company
 - Multi-select with checkboxes
@@ -112,7 +121,9 @@ search/export system. See Section 5.7 and Section 7 Critical Rules.
 
 ### 5.4 Export
 - Export modal: format selector (CSV, XLSX, JSON), field picker
-- Credit cost = number of contacts selected
+- Credit cost = number of contacts selected, excluding any contributed by
+  the exporting workspace itself or by an accepted My Network partner
+  (both free)
 - Balance check before export (block if insufficient)
 - Credits deducted via DB trigger on export creation
 - File generated in Supabase Edge Function
@@ -150,6 +161,8 @@ search/export system. See Section 5.7 and Section 7 Critical Rules.
    - *(All four fields sourced from `user_profiles`, Section 5.8 — never from the `contacts` table.)*
 4. **"See Contacts" popup/modal — REQUIREMENT: server-side pagination.** Clicking it opens a modal showing every contact that friend's workspace has contributed — full detail visible (name, title, company, email, phone, LinkedIn URL). This is **read-only**: no checkboxes, no export button, no download link, no credit interaction. **The modal must fetch contacts page-by-page from the server (e.g., 25–50 rows per page, with in-modal search/filter), not load a friend's entire contact set into the browser at once.** This matters regardless of contact-count size — a friend with 5,000,000 contacts must never cause the client to attempt to render or hold that many rows in memory.
 5. **Revoke.** Either party can revoke the connection at any time, unilaterally. Revocation immediately removes the row from My Network for both parties and re-gates the "See Contacts" view.
+6. **Credit treatment in the general pool** Contacts contributed by an accepted My Network partner are free to export from the general Contacts/Companies pages — this is separate from and does not conflict with the "no export path from My Network" rule below. That rule is about the My Network UI itself never having an export/download button; it says nothing about how the credit system treats those same contacts once they appear in the general search/filter pool. Rationale: partner contacts are effectively pre-vetted through the relationship, so charging the same as an anonymous pool contact would slow down networking rather than encourage it.
+
 
 **Database changes needed:**
 
@@ -195,10 +208,11 @@ These are explicitly out of scope for v1 (v1.4 adds My Network + Settings per Se
 - Column mapping UI (if CSV headers don't match) — v1.1
 - Bulk import via API — v2
 - Job change detection / data freshness — v2
-- **Any export/download path from My Network** — explicitly rejected. Connected partners can view contacts in-app only; screenshotting is an accepted, unaddressed limitation, not a feature to defend against.
+- **Any export/download path from My Network** — explicitly rejected. Connected partners can view contacts in-app only; screenshotting is an accepted, unaddressed limitation, not a feature to defend against. (This is about the My Network UI having no export button — it does not affect the separate credit-cost rule in Section 5.4, where partner-contributed contacts are free to export once found via the general Contacts/Companies search.)
 - **Lookup quotas / usage limits on My Network viewing** — explicitly rejected. Removed from earlier drafts once export was taken off the table entirely.
 - **Merging or exposing `user_profiles` data through the global `contacts` table, search, or export, in any form** — explicitly and permanently rejected as a privacy requirement, not a feature deferral. This is not a "v2 maybe" — it should never happen.
 - **Automated partner-matching algorithm** (suggesting connections based on geography, vertical overlap, etc.) — v2. My Network in v1.4 is invite-only and manual.
+
 
 ---
 
@@ -221,10 +235,10 @@ These are explicitly out of scope for v1 (v1.4 adds My Network + Settings per Se
 ### Critical Rules
 - Credits ledger: **append-only** — never UPDATE or DELETE
 - Email dedup key: `email_normalized` (LOWER + TRIM, generated column)
-- Contact email: never returned in frontend queries without credit unlock, own contribution, or an accepted My Network connection viewed via the dedicated My Network UI
+- Contact email: visible to all users viewing the Contacts/Companies pages, same as any other CSV-sourced field — never gated by viewing. Credits only gate export/download (Section 5.4). (My Network's separate view-only access, per Section 5.7, is unaffected — it was already ungated for connected partners.)
 - RLS: enabled on all tables from day one
 - **My Network connections require mutual acceptance** — a pending invite grants zero access
-- **My Network never touches the credit/export system** — no export path exists from that UI, no credit charge, no changes to the existing export Edge Function or its trigger
+- **The My Network UI itself never touches the credit/export system** — no export button exists there, no credit charge originates from that UI, no changes to the export Edge Function's core mechanics. Separately, the export credit-charge logic (Section 5.4) treats contacts contributed by an accepted My Network partner as free, same as the exporting workspace's own contributions — this is a credit-cost rule applied in the general Contacts/Companies export flow, not an exception carved into My Network itself.
 - **My Network contacts must not leak into the general Contacts search page** — application-query-scoping responsibility, not enforced by RLS alone
 - **The "See Contacts" modal must use server-side pagination** — never fetch or render a friend's full contact list client-side in one request, regardless of that friend's total contact count
 - **`user_profiles` is permanently and architecturally separate from `contacts`.** No query, view, join, export, or search path may ever surface `user_profiles` data (name, phone) as if it were a contact record in the shared pool, or vice versa. RLS on `user_profiles` should restrict visibility to: the profile owner (always), and any workspace with an accepted `workspace_connections` row linking to the owner's workspace (for My Network display only). This is a standing privacy requirement — any future feature that touches either table must preserve this separation, not just the initial build.

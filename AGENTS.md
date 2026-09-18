@@ -53,8 +53,11 @@ shadows on cards, solid-color borders, `<form>` tags in React.
    All candidate-builder normalization must use `.toLowerCase().trim()` to
    match — see `supabase/functions/import-processor/index.ts` candidate
    build site and the givetoget-backend skill pitfall.
-3. Never return a contact's email without a credit unlock or the workspace's
-   own contribution of that contact.
+3. No field from an uploaded CSV is gated by viewing — including email.
+   Credits gate export/download only (see Business Rules #4/#5 on credit
+   spend), never visibility. Contacts contributed by the exporting workspace
+   itself, or by an accepted My Network partner, are additionally FREE to
+   export (no credit charge) — see PRD.md Section 5.4 and 5.7.
 4. Credit **earn** happens via a DB trigger when an import completes.
 5. Credit **spend** happens via a DB trigger when an export record is created.
 6. RLS is enabled on every table, from day one, no exceptions.
@@ -289,7 +292,8 @@ design/design-system.md ← full token set + component specs
 - Never use light backgrounds, another accent color, drop shadows, or solid
   borders.
 - Never `UPDATE`/`DELETE` `credits_ledger` rows.
-- Never expose a contact email without a credit deduction.
+- Never gate any CSV-sourced field (including email) by viewing — credits gate
+  export/download only, not visibility.
 - Never skip RLS on a new table.
 - Never use `<form>` tags in React — event handlers only.
 - Never commit `.DS_Store`.
