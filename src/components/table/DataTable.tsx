@@ -154,7 +154,18 @@ function CellValue({ value, col }: { value: unknown; col: ColumnDef }) {
 function SortableHeader({ col, frozenLeft, sortKey, sortDir, onSort }: {
   col: ColumnDef; frozenLeft: number | null; sortKey: string; sortDir: SortDir; onSort: (k: string) => void;
 }) {
-  const { setNodeRef, transform, transition, isDragging } = useSortable({ id: col.key });
+  // attributes/listeners/setActivatorNodeRef are the DnD activator wiring.
+  // Without them nothing was draggable (the pre-fix bug: only the transform
+  // hook was destructured, so the grip could never start a drag).
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    attributes,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: col.key });
   const active = sortKey === col.key;
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -174,8 +185,17 @@ function SortableHeader({ col, frozenLeft, sortKey, sortDir, onSort }: {
   }
   return (
     <th ref={setNodeRef} style={style} scope="col">
-      <div style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "grab" }}>
-        <GripVertical size={11} style={{ opacity: 0.35, flexShrink: 0 }} />
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <span
+          ref={setActivatorNodeRef}
+          {...attributes}
+          {...listeners}
+          title="Drag to reorder"
+          aria-label={`Drag ${col.label} to reorder`}
+          style={{ display: "inline-flex", alignItems: "center", cursor: "grab", color: active ? "#C4B5FD" : muted }}
+        >
+          <GripVertical size={11} style={{ opacity: 0.35, flexShrink: 0 }} />
+        </span>
         <button
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSort(col.key); }}
           aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
