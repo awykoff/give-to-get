@@ -21,7 +21,7 @@ coverage rather than only manually clicking through.
    email normalization).
 2. RLS policy tests → `__tests__/rls/` — assert cross-workspace reads fail.
 3. Import/credit tests → `__tests__/import/`, `__tests__/credits/`.
-4. E2E → `e2e/` using Playwright (`playwright.config.ts` already configured
+4. E2E → `tests/e2e/` using Playwright (`playwright.config.ts` already configured
    in the repo) for critical user flows: signup → import → browse → export.
 
 ## Critical Test Cases
@@ -42,7 +42,7 @@ coverage rather than only manually clicking through.
   and gives a false pass.
 - **Boundary with the Moggallana QA role (`givetoget-qa-moggallana`,
   when created).** `givetoget-tester` runs Playwright against **localhost
-  dev** as a pre-commit gate — the same `e2e/` directory, the same
+  dev** as a pre-commit gate — the same `tests/e2e/` directory, the same
   flows (signup → import → browse → export), but aimed at the developer's
   local server with whatever test data the developer has seeded. The
   Moggallana role runs Playwright against a **deployed URL** (Vercel
