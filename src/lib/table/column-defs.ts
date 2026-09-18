@@ -12,23 +12,24 @@
 // schema and these defs together.
 //
 // Column counts (twice-independently-verified): contacts 60, companies 33.
-// The 5 gated contact fields are email, email_normalized, secondary_email,
-// tertiary_email, last_name. Everything else is displayable.
+// NO contact fields are gated by viewing (policy reversal, this session):
+// no field from an uploaded CSV is gated — including email and last_name.
+// Credits gate export/download only, never visibility. All 60 contact fields
+// are displayable.
 // Email-METADATA fields (email_status, email_source, email_verification_source,
 // email_confidence, email_catch_all_status, email_last_verified_at,
 // secondary_email_source, secondary_email_status, tertiary_email_source,
-// tertiary_email_status) are deliberately SAFE to expose — metadata about an
-// email is not the email itself. Do not collapse them into gated.
+// tertiary_email_status) are exposed like any other CSV-sourced field.
 //
 // Derived exports:
-//   CONTACT_PROJECTION  — id + contributed_by_workspace_id + all non-gated
-//     contact keys. Passed to .select() after the search_contacts RPC so
-//     gated emails never cross the wire to the client (migration 015
-//     returns SETOF contacts via SELECT c.*, which WOULD include them).
+//   CONTACT_PROJECTION  — id + contributed_by_workspace_id + all contact keys.
+//     Passed to .select() after the search_contacts RPC. No columns are gated
+//     by viewing (policy reversal), so the full row including email and
+//     last_name reaches the client. Migration 015 returns SETOF contacts via
+//     SELECT c.*, which already includes them.
 //   COMPANY_PROJECTION  — id + all company keys (companies have no email
 //     columns; return everything).
-//   CONTACT_SEARCH_FIELDS / COMPANY_SEARCH_FIELDS — used for the always-
-//     visible search caption copy.
+//   CONTACT_COLUMNS / COMPANY_COLUMNS — the full column definitions.
 // ---------------------------------------------------------------------------
 
 export type ColumnDef = {
@@ -42,19 +43,19 @@ export type ColumnDef = {
 // --- Contacts (60 columns) — verbatim from mockup ---
 export const CONTACT_COLUMNS: ColumnDef[] = [
   { key: "first_name", label: "First Name", type: "text", width: 120 },
-  { key: "last_name", label: "Last Name", type: "text", gated: true, width: 120 },
-  { key: "email", label: "Email", type: "text", gated: true, width: 170 },
-  { key: "email_normalized", label: "Email (Normalized)", type: "text", gated: true, width: 190 },
+  { key: "last_name", label: "Last Name", type: "text", width: 120 },
+  { key: "email", label: "Email", type: "text", width: 170 },
+  { key: "email_normalized", label: "Email (Normalized)", type: "text", width: 190 },
   { key: "email_status", label: "Email Status", type: "text", width: 130 },
   { key: "email_source", label: "Email Source", type: "text", width: 140 },
   { key: "email_verification_source", label: "Email Verification Source", type: "text", width: 200 },
   { key: "email_confidence", label: "Email Confidence", type: "number", width: 150 },
   { key: "email_catch_all_status", label: "Catch-All Status", type: "text", width: 150 },
   { key: "email_last_verified_at", label: "Email Last Verified", type: "date", width: 160 },
-  { key: "secondary_email", label: "Secondary Email", type: "text", gated: true, width: 180 },
+  { key: "secondary_email", label: "Secondary Email", type: "text", width: 180 },
   { key: "secondary_email_source", label: "Secondary Email Source", type: "text", width: 200 },
   { key: "secondary_email_status", label: "Secondary Email Status", type: "text", width: 200 },
-  { key: "tertiary_email", label: "Tertiary Email", type: "text", gated: true, width: 170 },
+  { key: "tertiary_email", label: "Tertiary Email", type: "text", width: 170 },
   { key: "tertiary_email_source", label: "Tertiary Email Source", type: "text", width: 190 },
   { key: "tertiary_email_status", label: "Tertiary Email Status", type: "text", width: 190 },
   { key: "title", label: "Title", type: "text", width: 190 },
@@ -140,23 +141,15 @@ export const COMPANY_COLUMNS: ColumnDef[] = [
   { key: "updated_at", label: "Updated", type: "date", width: 120 },
 ];
 
-// Gated contact fields — the only ones that must never reach the client.
-export const CONTACT_GATED_KEYS: readonly string[] = [
-  "email",
-  "email_normalized",
-  "secondary_email",
-  "tertiary_email",
-  "last_name",
-];
-
-// Projection for search_contacts: id + contributed_by_workspace_id +
-// every non-gated column. contributed_by_workspace_id is carried even though
-// it is not rendered — needed under the hood for the still-pending My
-// Network partner-filter rewire.
+// Projection for search_contacts: id + contributed_by_workspace_id + every
+// contact column. No columns are gated (policy reversal), so the full row
+// including email and last_name reaches the client. contributed_by_workspace_id
+// is carried even though it is not rendered — needed under the hood for the
+// still-pending My Network partner-filter rewire.
 export const CONTACT_PROJECTION: readonly string[] = [
   "id",
   "contributed_by_workspace_id",
-  ...CONTACT_COLUMNS.filter((c) => !c.gated).map((c) => c.key),
+  ...CONTACT_COLUMNS.map((c) => c.key),
 ];
 
 // Companies have no gated columns; return id + everything.
@@ -169,8 +162,8 @@ export const COMPANY_PROJECTION: readonly string[] = [
 export const SEARCH_CAPTION =
   "Searches every field below — name, title, company, location, industry, keywords, technologies, and more. Paste a full email for an exact match.";
 
-// Searchable fields, for the exact-match hint on contacts.
-export const CONTACT_EXACT_MATCH_KEYS = CONTACT_GATED_KEYS; // email_normalized, secondary, tertiary matched server-side
+// Search caption + exact-match hint are unconditional now (no gated fields
+// to gate them on) — see DataTable.tsx's hasGatedColumns handling.
 
 export function assertColumnCounts() {
   if (CONTACT_COLUMNS.length !== 60)
@@ -178,6 +171,6 @@ export function assertColumnCounts() {
   if (COMPANY_COLUMNS.length !== 33)
     throw new Error(`COMPANY_COLUMNS has ${COMPANY_COLUMNS.length}, expected 33`);
   const gated = CONTACT_COLUMNS.filter((c) => c.gated).map((c) => c.key);
-  if (gated.join(",") !== "email,email_normalized,secondary_email,tertiary_email,last_name")
-    throw new Error(`gated set drift: ${gated.join(",")}`);
+  if (gated.length !== 0)
+    throw new Error(`contact gating detected: ${gated.join(",")} — expected zero gated fields (no CSV-sourced field is gated by viewing)`);
 }
