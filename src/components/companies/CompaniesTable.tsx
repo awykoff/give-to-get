@@ -32,7 +32,11 @@ function useDebouncedValue(value: string, ms: number): string {
   return debounced;
 }
 
-export default function CompaniesTable() {
+type Props = {
+  onSelectionChange: (ids: string[]) => void;
+};
+
+export default function CompaniesTable({ onSelectionChange }: Props) {
   const searchParams = useSearchParams();
   // Already URL-decoded by useSearchParams — never re-decode.
   const listFilter = searchParams.get("list");
@@ -48,6 +52,8 @@ export default function CompaniesTable() {
   const [count, setCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [columnOrder, setColumnOrder] = useColumnOrder(
     "give-to-get-companies-column-order",
@@ -92,6 +98,17 @@ export default function CompaniesTable() {
     };
   }, [debouncedQuery, page, sortKey, sortDir, listFilter]);
 
+  // Reset selection on each fetch — the exported selection must reflect what's
+  // currently visible.
+  useEffect(() => {
+    setSelected(new Set());
+  }, [debouncedQuery, page, sortKey, sortDir, listFilter]);
+
+  // Push selection up to the page (selection toolbar).
+  useEffect(() => {
+    onSelectionChange(Array.from(selected));
+  }, [selected, onSelectionChange]);
+
   const handleSort = useCallback(
     (key: string) => {
       if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -102,6 +119,24 @@ export default function CompaniesTable() {
     },
     [sortKey]
   );
+
+  const handleToggle = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleToggleAll = useCallback(() => {
+    setSelected((prev) => {
+      const allVisibleOnPage = rows.length > 0 && rows.every((r) => prev.has(String(r.id)));
+      const next = new Set(prev);
+      if (allVisibleOnPage) rows.forEach((r) => next.delete(String(r.id)));
+      else rows.forEach((r) => next.add(String(r.id)));
+      return next;
+    });
+  }, [rows]);
 
   const totalPages = Math.max(1, Math.ceil(count / COMPANY_PAGE_SIZE));
 
@@ -163,6 +198,13 @@ export default function CompaniesTable() {
         loading={loading}
         error={error}
         placeholder="Search companies..."
+        selection={{
+          selected,
+          onToggle: handleToggle,
+          onToggleAll: handleToggleAll,
+          allSelected: rows.length > 0 && rows.every((r) => selected.has(String(r.id))),
+          someSelected: selected.size > 0 && !(rows.length > 0 && rows.every((r) => selected.has(String(r.id)))),
+        }}
       />
     </div>
   );
