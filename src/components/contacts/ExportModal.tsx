@@ -157,7 +157,11 @@ export default function ExportModal({ selectedIds, onClose, onComplete }: Props)
   };
 
   const handleConfirm = async () => {
-    if (insufficient) return;
+    // No client-side hard block on the stale `insufficient` estimate below.
+    // Pricing is server-authoritative per contact (own + accepted-network
+    // contributors are free under PR #25 economics, so the client can't
+    // precompute the true credit cost). If the balance is genuinely short,
+    // the Edge Function returns 402 with balance/required, handled below.
     setSubmitting(true);
     setError("");
     try {
