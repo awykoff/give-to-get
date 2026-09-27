@@ -1,13 +1,17 @@
 // src/components/lists/ListsTable.tsx
 // Shared renderer for the /lists/people and /lists/companies pages.
-// Client component: owns search filtering + the "Create new list" flow.
-// Importing/exporting list membership is handled by the pages; the Actions
-// column entries (Export list / Delete list) are wired as no-op stubs this
-// step per the approved scope (real implementations deferred).
+// Client component: owns search filtering, the "+ New list" create flow,
+// and the per-list Delete action. Create/Delete call the migration-022
+// SECURITY DEFINER RPCs (create_people_list/company_list, delete_...) and
+// then router.refresh() so the server pages re-fetch member counts.
+// (Export list is intentionally left unbound; exporting membership is a
+// separate concern.)
 
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type ListRow = { list_name: string; record_count: number };
 
@@ -24,9 +28,14 @@ const COL_HEADERS: { key: string; label: string }[] = [
 ];
 
 export default function ListsTable({ lists, kind, error }: Props) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const createRpc = kind === "people" ? "create_people_list" : "create_company_list";
+  const deleteRpc = kind === "people" ? "delete_people_list" : "delete_company_list";
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -37,6 +46,7 @@ export default function ListsTable({ lists, kind, error }: Props) {
   const baseHref = kind === "people" ? "/contacts" : "/companies";
 
   const startCreate = () => {
+    setNotice(null);
     setCreating(true);
     setNewName("");
   };
@@ -44,13 +54,32 @@ export default function ListsTable({ lists, kind, error }: Props) {
     setCreating(false);
     setNewName("");
   };
-  const confirmCreate = () => {
-    // v1: creating a list is just tagging — the actual write path (Add to
-    // list on selected contacts) is the next step. For now we close the
-    // input and no-op; a re-fetch would return nothing until a contact is
-    // actually tagged. Flagged in the approved scope.
+
+  // "+ New list" — idempotent create RPC (returns the existing list if the
+  // name already exists), then re-fetch so the 0-member list appears.
+  const confirmCreate = async () => {
+    const name = newName.trim();
+    if (!name) return;
     setCreating(false);
     setNewName("");
+    setNotice(null);
+    const { error } = await createClient().rpc(createRpc, { p_name: name });
+    if (error) {
+      setNotice(`Couldn't create "${name}": ${error.message}`);
+    }
+    router.refresh();
+  };
+
+  // Delete removes the list row AND un-tags its members (migration-022 RPC),
+  // then re-fetch.
+  const handleDelete = async (name: string) => {
+    if (!window.confirm(`Delete "${name}"? This removes the list and un-tags all its members.`)) return;
+    setNotice(null);
+    const { error } = await createClient().rpc(deleteRpc, { p_name: name });
+    if (error) {
+      setNotice(`Couldn't delete "${name}": ${error.message}`);
+    }
+    router.refresh();
   };
 
   return (
@@ -153,11 +182,16 @@ export default function ListsTable({ lists, kind, error }: Props) {
         </div>
       )}
 
-      {/* Error state */}
+      {/* Load error */}
       {error && (
         <div style={{ fontSize: 13, color: "#F87171" }}>
           Couldn't load lists: {error}
         </div>
+      )}
+
+      {/* Mutation feedback */}
+      {notice && (
+        <div style={{ fontSize: 13, color: "#F87171" }}>{notice}</div>
       )}
 
       {/* Table */}
@@ -194,7 +228,7 @@ export default function ListsTable({ lists, kind, error }: Props) {
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={3} style={{ padding: "24px 14px", color: "#8B87A8", textAlign: "center" }}>
-                  {query ? "No lists match your search." : "No lists yet. Select contacts and use “Add to list” to create one."}
+                  {query ? "No lists match your search." : "No lists yet. Use “+ New list”, or select contacts and use “Add to list” to create one."}
                 </td>
               </tr>
             )}
@@ -213,7 +247,13 @@ export default function ListsTable({ lists, kind, error }: Props) {
                 </td>
                 <td style={{ padding: "11px 14px", color: "#8B87A8", whiteSpace: "nowrap" }}>
                   <button style={linkButtonStyle} data-action="export">Export</button>
-                  <button style={{ ...linkButtonStyle, color: "#F87171" }} data-action="delete">Delete</button>
+                  <button
+                    style={{ ...linkButtonStyle, color: "#F87171" }}
+                    data-action="delete"
+                    onClick={() => handleDelete(l.list_name)}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))}
