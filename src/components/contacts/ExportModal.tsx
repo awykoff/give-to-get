@@ -71,8 +71,13 @@ export default function ExportModal({ selectedIds, onClose, onComplete }: Props)
   const [previewLoading, setPreviewLoading] = useState(true);
 
   const count = selectedIds.length;
-  const cost = preview ? preview.paid_count : count; // real charge (fallback: flat count)
-  const freeCount = preview?.free_count ?? 0;        // display-only
+  // Defensive cost: supabase.rpc returns a RETURNS TABLE function's result as
+  // an ARRAY of rows, so `preview` may be truthy while `preview.paid_count` is
+  // undefined. Coerce + fall back to the flat count/0 so `cost`/`freeCount` are
+  // ALWAYS numbers — never crash on toLocaleString(undefined), and never show a
+  // wrong value while the RPC is unresolved or mis-shaped.
+  const cost = Number(preview?.paid_count ?? count); // real charge (fallback: flat count)
+  const freeCount = Number(preview?.free_count ?? 0); // display-only
   const insufficient = balance !== null && balance < cost;
 
   // Fetch current credit balance once on mount. RLS lets the user see
@@ -145,7 +150,20 @@ export default function ExportModal({ selectedIds, onClose, onComplete }: Props)
         });
         if (!error && data) {
           if (!cancelled) {
-            setPreview(data as { contact_count: number; free_count: number; paid_count: number });
+            // Normalize the RPC result: PostgREST returns a RETURNS TABLE row as
+            // an array; take the first row and coerce every field to a number so
+            // the preview cost can never be undefined (the crash this hotfix fixes).
+            const anyData = data as unknown;
+            const row = Array.isArray(anyData)
+              ? (anyData as Record<string, number>[])[0]
+              : (anyData as Record<string, number>);
+            if (row) {
+              setPreview({
+                contact_count: Number(row.contact_count ?? 0),
+                free_count: Number(row.free_count ?? 0),
+                paid_count: Number(row.paid_count ?? 0),
+              });
+            }
           }
         }
       } finally {
