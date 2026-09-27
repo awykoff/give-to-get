@@ -112,9 +112,13 @@ if [ ${#MIG_FILES[@]} -eq 0 ]; then
 fi
 
 # Query the target DB for the set of applied versions. The version
-# stored in schema_migrations is the migration's filename (Supabase CLI
-# convention). We use DISTINCT in case the same version was applied
-# more than once (unusual but possible after a partial failure).
+# stored in schema_migrations is either the migration's FULL filename
+# (Supabase CLI `db push` convention) or the BARE NUMERIC prefix (this
+# project's convention when backfilled after Dashboard SQL Editor
+# applies, e.g. '016'). We normalize both sides to the leading numeric
+# prefix so either convention matches. We use DISTINCT in case the same
+# version was applied more than once (unusual but possible after a
+# partial failure).
 echo "Querying supabase_migrations.schema_migrations on the target project..."
 APPLIED_CSV="$(psql "$SUPABASE_MIGRATIONS_DB_URL" -tA -F, -v ON_ERROR_STOP=1 \
   -c "SELECT DISTINCT version FROM supabase_migrations.schema_migrations ORDER BY version;" \
@@ -128,10 +132,24 @@ APPLIED_CSV="$(psql "$SUPABASE_MIGRATIONS_DB_URL" -tA -F, -v ON_ERROR_STOP=1 \
 # nothing (no rows) by short-circuiting.
 APPLIED_SET="$(echo "$APPLIED_CSV" | awk 'NF' | sort -u)"
 
+# --- BUGFIX (2026-09): the comparison was matching full filenames against
+#     bare numeric DB versions and flagging every file (001_initial_schema.sql
+#     never eq 001). Normalize both sides to the leading digit prefix so the
+#     check works no matter which convention the table stores. ---
+# Extract the leading numeric prefix: "001" from "001_initial_schema.sql"
+# OR from a bare "001". Empty input -> empty output.
+normalize_version() {
+  [[ "$1" =~ ^([0-9]+) ]] && printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+# Applied DB versions, normalized to bare numeric regardless of stored form.
+APPLIED_PREFIXES="$(printf '%s\n' "$APPLIED_SET" | while IFS= read -r v; do [ -n "$v" ] && normalize_version "$v"; done | sort -u)"
+
 UNAPPLIED=()
 for f in "${MIG_FILES[@]}"; do
   base="$(basename "$f")"
-  if ! echo "$APPLIED_SET" | grep -qx "$base"; then
+  prefix="$(normalize_version "$base")"
+  if ! echo "$APPLIED_PREFIXES" | grep -qx "$prefix"; then
     UNAPPLIED+=("$base")
   fi
 done
@@ -152,12 +170,13 @@ if [ ${#UNAPPLIED[@]} -eq 0 ]; then
   # is an audit-hygiene issue, not necessarily a deploy blocker.
   # Set STRICT_DB_MIGRATIONS=true to promote to error.
   # ---------------------------------------------------------------------
-  REPO_BASES="$(printf '%s\n' "${MIG_FILES[@]}" | xargs -n1 basename 2>/dev/null | sort -u)"
+  REPO_PREFIXES="$(printf '%s\n' "${MIG_FILES[@]}" | xargs -n1 basename 2>/dev/null | while IFS= read -r b; do [ -n "$b" ] && normalize_version "$b"; done | sort -u)"
 
   DB_ONLY=()
   while IFS= read -r v; do
     [ -z "$v" ] && continue
-    if ! echo "$REPO_BASES" | grep -qx "$v"; then
+    vprefix="$(normalize_version "$v")"
+    if ! echo "$REPO_PREFIXES" | grep -qx "$vprefix"; then
       DB_ONLY+=("$v")
     fi
   done <<< "$APPLIED_SET"
@@ -196,7 +215,9 @@ echo "  1. Apply the migration(s) to the target Supabase project before merging:
 echo "     - supabase db push (preferred; updates schema_migrations automatically)" >&2
 echo "     - Dashboard SQL Editor paste (does NOT update schema_migrations — see option 3)" >&2
 echo "  2. If the migration was applied via Dashboard SQL Editor, backfill schema_migrations:" >&2
-echo "     INSERT INTO supabase_migrations.schema_migrations(version) VALUES ('007_user_profiles.sql');" >&2
+echo "     INSERT INTO supabase_migrations.schema_migrations(version) VALUES ('007');" >&2
+echo "     (this project's convention stores the BARE numeric prefix, e.g. '007' —" >&2
+echo "      not the filename; the check normalizes either form.)" >&2
 echo "  3. If intentionally skipping (e.g. preview-only migration), set ALLOW_UNAPPLIED_MIGRATIONS=true" >&2
 echo "     on this PR — but add a follow-up issue so it does not get forgotten." >&2
 exit 1
