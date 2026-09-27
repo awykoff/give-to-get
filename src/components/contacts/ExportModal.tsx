@@ -64,8 +64,15 @@ export default function ExportModal({ selectedIds, onClose, onComplete }: Props)
   const [success, setSuccess] = useState<ExportSuccess | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Server-computed free/paid split for the cost preview (021 RPC). Null while
+  // loading or if the RPC isn't deployed yet -> cost falls back to the flat
+  // count (an over-estimate, never an under-charge). Display-only math.
+  const [preview, setPreview] = useState<{ contact_count: number; free_count: number; paid_count: number } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(true);
+
   const count = selectedIds.length;
-  const cost = count; // 1 credit per contact
+  const cost = preview ? preview.paid_count : count; // real charge (fallback: flat count)
+  const freeCount = preview?.free_count ?? 0;        // display-only
   const insufficient = balance !== null && balance < cost;
 
   // Fetch current credit balance once on mount. RLS lets the user see
@@ -124,6 +131,31 @@ export default function ExportModal({ selectedIds, onClose, onComplete }: Props)
       cancelled = true;
     };
   }, []);
+
+  // Fetch the free/paid split so the cost preview matches what the export will
+  // actually charge (021 RPC). On RPC error (e.g. 021 not deployed yet), preview
+  // stays null and cost falls back to the flat count — conservative.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.rpc("export_cost_preview", {
+          p_contact_ids: selectedIds,
+        });
+        if (!error && data) {
+          if (!cancelled) {
+            setPreview(data as { contact_count: number; free_count: number; paid_count: number });
+          }
+        }
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedIds]);
 
   // Lock body scroll while modal is open.
   useEffect(() => {
@@ -256,6 +288,8 @@ export default function ExportModal({ selectedIds, onClose, onComplete }: Props)
           <ConfigurePanel
             count={count}
             cost={cost}
+            freeCount={freeCount}
+            previewLoading={previewLoading}
             balance={balance}
             balanceLoading={balanceLoading}
             insufficient={!!insufficient}
@@ -282,6 +316,8 @@ export default function ExportModal({ selectedIds, onClose, onComplete }: Props)
 function ConfigurePanel(props: {
   count: number;
   cost: number;
+  freeCount: number;
+  previewLoading: boolean;
   balance: number | null;
   balanceLoading: boolean;
   insufficient: boolean;
@@ -295,7 +331,7 @@ function ConfigurePanel(props: {
   onConfirm: () => void;
 }) {
   const {
-    count, cost, balance, balanceLoading, insufficient,
+    count, cost, freeCount, previewLoading, balance, balanceLoading, insufficient,
     format, setFormat, fields, toggleField,
     submitting, error, onClose, onConfirm,
   } = props;
@@ -366,11 +402,17 @@ function ConfigurePanel(props: {
               Cost
             </div>
             <div style={{ fontSize: "22px", fontWeight: 700, color: "#C4B5FD", marginTop: "4px" }}>
-              {cost.toLocaleString()} <span style={{ fontSize: "13px", color: "#8B87A8", fontWeight: 500 }}>credits</span>
+              {previewLoading ? "—" : cost.toLocaleString()} <span style={{ fontSize: "13px", color: "#8B87A8", fontWeight: 500 }}>credits</span>
             </div>
-            <div style={{ fontSize: "11px", color: "#4E4A66", marginTop: "2px" }}>
-              1 credit per contact
-            </div>
+            {!previewLoading && freeCount > 0 ? (
+              <div style={{ fontSize: "11px", color: "#6EE7B7", marginTop: "2px" }}>
+                {freeCount.toLocaleString()} free (own + network); 1 credit each otherwise
+              </div>
+            ) : (
+              <div style={{ fontSize: "11px", color: "#4E4A66", marginTop: "2px" }}>
+                1 credit per non-free contact
+              </div>
+            )}
           </div>
           <div
             style={{
