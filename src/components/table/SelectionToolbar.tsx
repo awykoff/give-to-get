@@ -155,7 +155,7 @@ export default function SelectionToolbar({
     if (failed) {
       setNotice(`Couldn't add to "${name}": ${failed}`);
     } else {
-      setNotice(`${added.toLocaleString()} of ${count.toLocaleString()} added to "${name}"`);
+      setNotice(`${added.toLocaleString()} of ${count.toLocaleString()} added (${count - added} already in list) to "${name}"`);
     }
     loadLists();
   };
@@ -307,7 +307,7 @@ export default function SelectionToolbar({
             )}
             {!listsLoading && filtered.length === 0 && !query && (
               <div style={{ padding: "8px 10px", fontSize: "12px", color: muted }}>
-                No lists yet — use “Create new list” below.
+                No lists yet — create one below, or add the selection to a new list.
               </div>
             )}
             {!listsLoading && filtered.length === 0 && query && (
