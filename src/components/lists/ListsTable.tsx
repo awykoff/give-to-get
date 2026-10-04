@@ -228,7 +228,7 @@ export default function ListsTable({ lists, kind, error }: Props) {
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={3} style={{ padding: "24px 14px", color: "#8B87A8", textAlign: "center" }}>
-                  {query ? "No lists match your search." : "No lists yet. Use “+ New list” to create one, or select contacts and use “Add to list”."}
+                  {query ? "No lists match your search." : kind === "people" ? "No lists yet. Use “+ New list” to create one, or select contacts and use “Add to list”." : "No lists yet. Use “+ New list” to create one, or select companies and use “Add to list”."}
                 </td>
               </tr>
             )}
