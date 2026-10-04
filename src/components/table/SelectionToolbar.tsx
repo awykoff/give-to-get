@@ -155,7 +155,12 @@ export default function SelectionToolbar({
     if (failed) {
       setNotice(`Couldn't add to "${name}": ${failed}`);
     } else {
-      setNotice(`${added.toLocaleString()} of ${count.toLocaleString()} added (${count - added} already in list) to "${name}"`);
+      const alreadyInList = count - added;
+      setNotice(
+        alreadyInList > 0
+          ? `${added.toLocaleString()} of ${count.toLocaleString()} added to "${name}" (${alreadyInList} already in list)`
+          : `${added.toLocaleString()} of ${count.toLocaleString()} added to "${name}"`
+      );
     }
     loadLists();
   };
